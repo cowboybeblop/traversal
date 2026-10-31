@@ -180,3 +180,18 @@ Validation externe `duelf 5` (Mont Blanc, L5), `hang=30,nmp=0,lmp=0` :
 Aucun paramètre d'éval ne bouge : la v1 était déjà bien calée, et le criblage
 confirme un optimum plat autour des valeurs livrées. Les gains de la v5.2
 viennent exclusivement de la recherche (NMP/LMP coupés).
+
+### Expériences risquées v5.2 (toutes rejetées)
+
+| Idée | Principe | Résultat | Décision |
+|---|---|---|---|
+| `raz=1` | razoring : stand-pat + 300·d ≤ alpha à prof ≤ 2 → quiescence | −29 cap | rejeté |
+| `see=1` | filtre SEE en quiescence (attaques non rentables ignorées) | 0 cap, idem combinée | rejeté |
+| `sing=1` | extension singulière du meilleur coup racine (+1) | 0 cap | rejeté |
+| `qext=1` | quiescence étendue aux coups à distance 1 de sortie | −14 puis +29/24, **−14/48** | rejeté |
+| `qext` focalisé | idem, seulement si l'adversaire menace de sortir au trait suivant | +29 cap, +29 fuel/24, **−14/48** | rejeté |
+
+La quiescence Exit/Attack + delta pruning est déjà bien dimensionnée : toute
+extension paie son coût en nœuds sans gain stratégique mesurable. Le moteur est
+sur un optimum local solide ; les prochains gains devront venir de changements
+plus structurels (policy racine, terms d'éval appris), pas de micro-tuning.
