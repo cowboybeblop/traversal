@@ -42,11 +42,35 @@ pub struct Flags {
     pub blocked: i32,
     /// cache d'évaluations indexé par Zobrist (états non terminaux seulement)
     pub ecache: bool,
+    /// racine : conserver le best move des itérations complétées (stabilité fuel)
+    pub rs: bool,
+    /// racine : ne re-rechercher en profondeur que les 4 meilleurs coups
+    pub rn: bool,
+    /// history : malus sur les coups explorés sans devenir best
+    pub hb: bool,
+    /// counter-move : le coup qui a répondu au coup précédent est trié en tête
+    pub cm: bool,
+    /// race graduée : différentiel de Dijkstra Sentinelle au lieu du ±200 binaire
+    pub rdif: bool,
+    /// sûreté de la Sentinelle : distance à l'ennemi le plus proche capable de la battre
+    pub ssafe: bool,
+    /// continuation history (1 ply) dans le tri des coups silencieux
+    pub ch: bool,
+    /// SEE signé : les attaques perdantes sont triées après les coups silencieux
+    pub seet: bool,
+    /// eval : contrôle des zones de sortie (bord opposé à portée)
+    pub zc: bool,
+    /// eval : terme matériel (différentiel de Force des pièces vivantes)
+    pub mat: bool,
+    /// 3 killers par ply au lieu de 2
+    pub k3: bool,
+    /// internal iterative reduction : pas de coup TT à prof ≥ 4 → réduire de 1
+    pub iir: bool,
 }
 
 impl Default for Flags {
     fn default() -> Flags {
-        Flags { aspiration: false, nmp: true, lmr: true, fut: true, lmp: true, ttx: true, support_w: 0, hang_w: 0, blocked: 0, ecache: false }
+        Flags { aspiration: false, nmp: true, lmr: true, fut: true, lmp: true, ttx: true, support_w: 0, hang_w: 0, blocked: 0, ecache: false, rs: false, rn: false, hb: false, cm: false, rdif: false, ssafe: false, ch: false, seet: false, zc: false, mat: false, k3: false, iir: false }
     }
 }
 
@@ -55,13 +79,22 @@ const ECACHE_N: usize = 1 << 18;
 
 impl Flags {
     /// Ensemble validé par criblage A/B (voir EXPERIMENTS.md) :
-    /// hang=30 (pièces menacées), blocked=140 (progression barrée par les
-    /// Sentinelles adverses) et cache d'évaluations Zobrist. À budget de
-    /// nœuds égal : +92 Elo/100 p. ; à parité fuel réelle : +27 Elo/104 p.
-    /// face au hang=30 seul ; +22 Elo/64 p. face à hang=30+cache.
+    /// hang=30 (pièces menacées), sans null-move ni LMP (perdants en miroir
+    /// fuel), race graduée (différentiel de sortie Sentinelle, +64 Elo/104 p.).
+    /// `blocked` et le cache d'évaluations sont écartés : le coût fuel de
+    /// `blocked` (+2 Dijkstra/éval) annule son gain, le cache est neutre.
     pub fn best() -> Flags {
-        Flags { hang_w: 30, blocked: 140, ecache: true, ..Flags::default() }
+        Flags { hang_w: 30, nmp: false, lmp: false, rdif: true, ..Flags::default() }
     }
+}
+
+/// Une pièce d'indice donné est-elle vivante, et laquelle ?
+fn chist_new() -> [[[[u16; SQUARES]; 3]; SQUARES]; 3] {
+    [[[[0u16; SQUARES]; 3]; SQUARES]; 3]
+}
+
+fn live_piece(s: &State, owner: u8, kind: Kind, sq: u8) -> Option<traversal_bot::core::state::Piece> {
+    s.pieces().iter().find(|p| p.owner == owner && p.kind == kind && p.sq == sq).copied()
 }
 
 fn kind3(k: Kind) -> usize {
@@ -78,7 +111,7 @@ fn never() -> bool {
 
 pub struct Engine {
     pub tt: TT,
-    killers: [[u32; 2]; MAX_PLY + 2],
+    killers: [[u32; 3]; MAX_PLY + 2],
     history: [[[u32; SQUARES]; SQUARES]; 3],
     costs: [[u16; SQUARES]; 2],
     pub heights: [u8; SQUARES],
@@ -97,6 +130,14 @@ pub struct Engine {
     root_scores: [i32; ROOT_CAP],
     /// cache d'évaluations direct-mapped (clé Zobrist → valeur), si `flags.ecache`.
     ecache: Vec<(u64, i32)>,
+    /// counter-move : réponse enregistrée par (pièce, case) du coup précédent.
+    cmoves: [[u32; SQUARES]; 6],
+    /// dernier coup packé joué (pour counter-move), par ply.
+    last_mv: [u32; MAX_PLY + 2],
+    /// continuation history : history[kind][to][kind_prev][to_prev]
+    chist: Vec<[[[[u16; SQUARES]; 3]; SQUARES]; 3]>,
+    /// dernier coup silencieux packé, par ply (pour continuation history)
+    prev_quiet: [u32; MAX_PLY + 2],
 }
 
 impl Engine {
@@ -120,7 +161,7 @@ impl Engine {
         }
         Engine {
             tt: TT::new(),
-            killers: [[NO_MOVE; 2]; MAX_PLY + 2],
+            killers: [[NO_MOVE; 3]; MAX_PLY + 2],
             history: [[[0; SQUARES]; SQUARES]; 3],
             costs: [exit_costs(&heights, 1), exit_costs(&heights, 2)],
             heights,
@@ -138,6 +179,10 @@ impl Engine {
             aborted: false,
             root_scores: [0; ROOT_CAP],
             ecache: vec![(0u64, 0i32); ECACHE_N],
+            cmoves: [[NO_MOVE; SQUARES]; 6],
+            last_mv: [NO_MOVE; MAX_PLY + 2],
+            chist: vec![chist_new()],
+            prev_quiet: [NO_MOVE; MAX_PLY + 2],
         }
     }
 
@@ -220,6 +265,29 @@ impl Engine {
             k += 400_000;
         } else if packed == self.killers[ply][1] {
             k += 380_000;
+        } else if self.flags.k3 && packed == self.killers[ply][2] {
+            k += 360_000;
+        }
+        if self.flags.cm && m.kind == MoveKind::Move && ply >= 1 {
+            let p = s.piece(m.piece);
+            let pk = kind3(p.kind) * 2 + (p.owner as usize - 1);
+            if self.cmoves[pk][p.sq as usize] == packed {
+                k += 200_000;
+            }
+        }
+        if self.flags.ch && m.kind == MoveKind::Move {
+            let p = s.piece(m.piece);
+            let pq = self.prev_quiet[ply];
+            if pq != NO_MOVE && pq & 0x30000 == 0 {
+                let prev_to = (pq & 0xFF) as usize;
+                let prev_kind = ((pq >> 8) & 0xFF) as usize;
+                if prev_kind < 3 {
+                    k += (self.chist[0][kind3(p.kind)][m.to as usize][prev_kind][prev_to] as i32).min(2048) * 4;
+                }
+            }
+        }
+        if self.flags.seet && m.kind == MoveKind::Attack && m.attack < m.defense {
+            k -= 450_000;
         }
         k
     }
@@ -227,9 +295,20 @@ impl Engine {
     /// Coup de coupure : killers + bonus d'history à gravité (32·d², cap 2^24).
     fn bump_history(&mut self, s: &State, m: &Move, ply: usize, depth: i8) {
         let packed = pack_move(m);
+        let slots = if self.flags.k3 { 3 } else { 2 };
         if self.killers[ply][0] != packed {
-            if self.killers[ply][1] != packed {
-                self.killers[ply][1] = self.killers[ply][0];
+            let mut j = 1;
+            while j < slots && self.killers[ply][j] != packed {
+                j += 1;
+            }
+            // décaler (nouveau coup en tête)
+            let mut k = j.min(slots - 1);
+            while k > 0 {
+                self.killers[ply][k] = self.killers[ply][k - 1];
+                k -= 1;
+            }
+            if j >= slots {
+                self.killers[ply][slots - 1] = self.killers[ply][slots - 1];
             }
             self.killers[ply][0] = packed;
         }
@@ -253,6 +332,31 @@ impl Engine {
         allow_lmr: bool,
     ) -> Option<i32> {
         let cd = (depth - 1 + if m.kind == MoveKind::Exit { 1 } else { 0 }).max(0);
+        if self.flags.ch {
+            let saved = self.prev_quiet[ply];
+            let kq = if m.kind == MoveKind::Move {
+                ((kind3(s.piece(m.piece).kind) as u32) << 8) | m.to as u32
+            } else { NO_MOVE };
+            self.prev_quiet[ply] = kq;
+            let r = self.try_move_inner(s, m, cd, alpha, beta, ply, searched, allow_lmr);
+            self.prev_quiet[ply] = saved;
+            return r;
+        }
+        self.try_move_inner(s, m, cd, alpha, beta, ply, searched, allow_lmr)
+    }
+
+    fn try_move_inner(
+        &mut self,
+        s: &State,
+        m: &Move,
+        cd: i8,
+        alpha: i32,
+        beta: i32,
+        ply: usize,
+        searched: usize,
+        allow_lmr: bool,
+    ) -> Option<i32> {
+        let depth = cd + 1 - if m.kind == MoveKind::Exit { 1 } else { 0 };
         let child = apply_move(s, m);
         if searched == 0 {
             return Some(-self.negamax(&child, cd, -beta, -alpha, ply + 1)?);
@@ -285,6 +389,9 @@ impl Engine {
 
         let mut tt_mv = NO_MOVE;
         let tt_probe = if self.flags.ttx { self.tt.probe(key) } else { None };
+        if self.flags.iir && tt_probe.is_none() && depth >= 4 {
+            return self.negamax(s, depth - 1, alpha, beta, ply);
+        }
         if let Some(e) = tt_probe {
             if e.depth as i8 >= depth {
                 match e.bound {
@@ -409,11 +516,33 @@ impl Engine {
                         best = sc;
                         best_packed = pack_move(&m);
                     }
+                    if self.flags.hb && m.kind == MoveKind::Move && searched > 1 && sc <= alpha {
+                        let p = s.piece(m.piece);
+                        let h = &mut self.history[kind3(p.kind)][p.sq as usize][m.to as usize];
+                        *h = h.saturating_sub((depth as i32 * depth as i32) as u32 / 4);
+                    }
                     if best > alpha {
                         alpha = best;
                         if alpha >= beta {
                             if m.kind == MoveKind::Move {
                                 self.bump_history(s, &m, ply, depth);
+                                if self.flags.cm {
+                                    let p = s.piece(m.piece);
+                                    let k = kind3(p.kind) * 2 + (p.owner as usize - 1);
+                                    if ply >= 1 { self.cmoves[k][p.sq as usize] = pack_move(&m); }
+                                }
+                                if self.flags.ch && ply >= 1 {
+                                    let pq = self.prev_quiet[ply - 1];
+                                    if pq != NO_MOVE && pq & 0x30000 == 0 {
+                                        let prev_to = (pq & 0xFF) as usize;
+                                        let prev_kind = ((pq >> 8) & 0xFF) as usize;
+                                        let p = s.piece(m.piece);
+                                        if prev_kind < 3 {
+                                            let h = &mut self.chist[0][kind3(p.kind)][m.to as usize][prev_kind][prev_to];
+                                            *h = h.saturating_add((depth as i32 * depth as i32) as u16).min(2048);
+                                        }
+                                    }
+                                }
                             }
                             break;
                         }
@@ -495,7 +624,7 @@ impl Engine {
         self.stop = stop;
         self.nodes = 0;
         self.aborted = false;
-        self.killers = [[NO_MOVE; 2]; MAX_PLY + 2];
+        self.killers = [[NO_MOVE; 3]; MAX_PLY + 2];
         self.history = [[[0; SQUARES]; SQUARES]; 3];
         self.last_ply = s.ply;
 
@@ -575,6 +704,10 @@ impl Engine {
                 self.root_scores = scores;
                 // Re-tri : les meilleurs d'abord, ordre stable.
                 order.sort_by_key(|&mi| std::cmp::Reverse(self.root_scores[mi]));
+                // Concentration : aux grandes profondeurs, ne garder que le top 4.
+                if self.flags.rn && depth >= 6 && n > 4 {
+                    order.truncate(4);
+                }
             }
         }
 

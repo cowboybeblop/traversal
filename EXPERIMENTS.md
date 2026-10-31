@@ -130,3 +130,197 @@ plus haut ont été pris avec ce même schéma sur le build original.
 - Étendre duelf L5 spec v5 à ≥ 100 parties ; fmirror v5 vs hang=30 à ≥ 100 parties.
 - Confronter le mystère « 44 % default vs 52-67 % selon spec » à grande échelle.
 - Pousser sur GitHub dès que le connecteur a la permission Contents:write.
+
+## Session v5.2 — re-criblage complet (NMP/LMP)
+
+Constat initial : le build v5.1 livrait `hang=30,blocked=140,ec=1`. Re-criblage
+systématique en cap puis fuel (fmirror 24, confirmation 48 à offset disjoint) :
+
+| Expérience | Résultat | Décision |
+|---|---|---|
+| `blocked=140,ec=1` vs `hang=30` (fuel, 24 p.) | 9V-14D-1N, **−73 Elo** | écarté définitivement |
+| `hang=20` / `hang=40` vs `hang=30` (fuel) | −29 / −89 | hang=30 confirmé |
+| **`nmp=0`** vs `hang=30` (cap, fuel 24, fuel 48) | +104 / +104 / **+191 (33V-9D-6N)** | ✅ **RETENU** |
+| **`nmp=0,lmp=0`** vs `nmp=0` (fuel 24, 48) | +44 / **+51 (27V-20D-1N)** | ✅ **RETENU** |
+| `fut=0`, `lmr=0`, `tt=0` sur nouvelle base (cap) | −120 / −29 / −29 | tous gardés |
+| `asp=1` / `ec=1` sur nouvelle base (fuel, 24 p.) | 0 / −14 | neutres → off |
+| `hang=25` / `hang=35` sur nouvelle base (fuel 24/48) | +29 puis −14 / −73 | hang=30 confirmé |
+| `delta=80` (cap +104, fuel +29, confirm. 48) | **−51** | bruit cap, rejeté ; 60 gardé |
+| `futility=100` (cap +104, fuel −29) | — | rejeté ; 140 gardé |
+| `ord=1` (base Dijkstra dans l'ordering interne) | −73 cap, **−137 fuel** | rejeté |
+| `lmr1=1` (réduction LMR fixe r=1) | −29 cap | rejeté |
+
+Pourquoi NMP devait sauter : le null-move est primitif ici (tour inversé sans
+véritable tempo — l'adversaire « passe » dans la simulation), il crée des coupures
+fictives sur des positions de course. LMP, conçu pour élaguer du silencieux,
+perdait des coups de progression utiles dès que NMP ne masquait plus les scores.
+
+Validation externe `duelf 5` (Mont Blanc, L5), `hang=30,nmp=0,lmp=0` :
+- [0+12] 11V-1D-0N ; [6+30] 18V-2D-4N ; [30+54] 21V-3D-0N → cumul **39V-5D-4N ≈ +300 Elo**.
+- Miroir fuel vs l'ancienne config livrée : **39V-9D-0N (+255 Elo)** sur 48 p.
+- ~67 k nœuds/coup, wasm 209 Ko, sanity/rejeu OK.
+
+## Livraison
+
+- `Flags::best()` = { hang_w: 30, nmp: false, lmp: false } — le reste off.
+
+### Tuning v5.2 (base `hang=30,nmp=0,lmp=0`)
+
+| Paramètre | Variante | Cap 15 k (24 p.) | Fuel | Décision |
+|---|---|---|---|---|
+| tempo | 4 / 12 | +44 / −29 | tempo=4 : **−120** | 8 confirmé |
+| race | 100 / 150 / 250 | — | +29 / +120 puis **+14 (48 p.)** / −29 | 200 confirmé |
+| race_h | 4 / 6 | 0 / 0 | — | 5 confirmé |
+| base | 26 / 34 | −29 / +29 | — | 30 confirmé |
+| sent_w | 8 / 12 | −58 / +58 | sent_w=12 : 0 | 5 confirmé (profil en cloche) |
+| prog_a | 6 | −14 | — | 4 confirmé |
+| score | 120 | −104 | — | 100 confirmé |
+| exta (extension des attaques +1) | on | −14 | — | rejeté |
+
+Aucun paramètre d'éval ne bouge : la v1 était déjà bien calée, et le criblage
+confirme un optimum plat autour des valeurs livrées. Les gains de la v5.2
+viennent exclusivement de la recherche (NMP/LMP coupés).
+
+### Expériences risquées v5.2 (toutes rejetées)
+
+| Idée | Principe | Résultat | Décision |
+|---|---|---|---|
+| `raz=1` | razoring : stand-pat + 300·d ≤ alpha à prof ≤ 2 → quiescence | −29 cap | rejeté |
+| `see=1` | filtre SEE en quiescence (attaques non rentables ignorées) | 0 cap, idem combinée | rejeté |
+| `sing=1` | extension singulière du meilleur coup racine (+1) | 0 cap | rejeté |
+| `qext=1` | quiescence étendue aux coups à distance 1 de sortie | −14 puis +29/24, **−14/48** | rejeté |
+| `qext` focalisé | idem, seulement si l'adversaire menace de sortir au trait suivant | +29 cap, +29 fuel/24, **−14/48** | rejeté |
+
+La quiescence Exit/Attack + delta pruning est déjà bien dimensionnée : toute
+extension paie son coût en nœuds sans gain stratégique mesurable. Le moteur est
+sur un optimum local solide ; les prochains gains devront venir de changements
+plus structurels (policy racine, terms d'éval appris), pas de micro-tuning.
+
+## Session v5.3 — pentanomial, race graduée (rdif)
+
+Infrastructure : scoring pentanomial ajouté au harnais (paires inversées LL/LT/TT/WT/WW
++ Elo pentanomial) — filtre les faux positifs du binomial sur petits échantillons.
+
+Flags implémentés et criblés (cap 48 p., puis fuel 48, puis 100+ pour finalistes) :
+
+| Flag | Principe | Cap 48 | Fuel | Décision |
+|---|---|---|---|---|
+| **`rdif=1`** | race graduée : différentiel de plies de sortie Sentinelle (cap ±race), au lieu du ±200 binaire | **+129, penta +120** | +36/48 puis **+64 (54V-35D-15N)/104 p., penta +84** | ✅ **RETENU** |
+| `hb=1` | malus history sur coups silencieux perdants | +14, penta 0 | — | rejeté (bruit) |
+| `cm=1` | counter-move table (12 Ko) | +14 puis −44 | — | rejeté |
+| `ssafe=1` | sûreté Sentinelle (distance aux ennemis capables de capturer) | −44 puis −29 | — | rejeté |
+| `rn=1` | concentration racine top-4 dès prof 6 | 0, penta 0 | 0, penta −17 | rejeté |
+| `rs=1` | stabilité racine | — | — | déjà le comportement par défaut (retrait du flag) |
+| `rdif` + `race=300` / `race=120` | re-tuning du cap gradué | +51/+44 cap | **−73** / 0 | bruit cap ; race=200 confirmé |
+
+Note : le flag `rs` a révélé au passage que le best move n'était déjà mis à jour que
+sur itération complétée — la « stabilité fuel » existait ; le flag a été retiré.
+
+Validation externe `duelf 5` (Mont Blanc L5), `hang=30,nmp=0,lmp=0,rdif=1` :
+- [0+36] 32V-4D-0N ; [40+76] 31V-4D-1N ; [120+156] 32V-4D-0N
+- Cumul 108 p. : **95V-12D-1N ≈ +350 Elo** (v5.2 : ~+300/48 p.)
+
+## Livraison
+
+- `Flags::best()` = { hang_w: 30, nmp: false, lmp: false, rdif: true }.
+
+### Session v5.3 bis — catalogue restant (tous rejetés)
+
+Base : v5.3 (`hang=30,nmp=0,lmp=0,rdif=1`). Cap 48 p. + fuel 48 p. pour les neutres.
+
+| Flag | Principe | Résultat | Décision |
+|---|---|---|---|
+| `ch=1` | continuation history (kind,to du coup précédent) | 0 cap, 0 fuel, penta 0 | rejeté |
+| `seet=1` | SEE signé : attaques perdantes triées après les silencieux | 0 cap, 0 fuel | rejeté |
+| `zc=1` | contrôle des zones de sortie (prime ≤3 tours) | **−44** cap, penta −41 | rejeté |
+| `mat=1` | terme matériel (12×Force vive) | −7 cap, penta −17 | rejeté (matériel déjà implicite dans prog/score) |
+
+Notes d'implémentation : `chist` (360 Ko) doit vivre sur le heap WASM (Vec),
+sinon la structure Engine copiée par valeur crashe la mémoire (fix documenté).
+`zc` dégrade : la prime de zone duplique le terme de progrès et pousse à
+s'entasser près de la sortie. `mat` n'apporte rien : la Force est déjà capturée
+par prog_b et le différentiel de score de sortie.
+
+Bilan catalogue : search/eval « classique » épuisé sur ce moteur — toutes les
+heuristiques standard restantes sont neutres ou perdantes. Prochaine étape
+rentable : pipeline de données (Texel #15 → policy racine #16 → NNUE #18).
+
+## Session v6 — pipeline data : Texel tuning + SPRT (mode expert)
+
+Infrastructure livrée :
+
+1. **`selfdump`** (harnais) : self-play fuel avec dump de positions labellisées
+   (W/D/L final côté trait), une partie sur deux contre un bot de référence pour
+   la diversité. Format : `to_move ply scores | hauteurs | pièces | z`.
+2. **`tools/texel.py`** : réimplémentation Python de l'eval (Dijkstra exit_costs,
+   turns_for, prog, sent, hang, rdif, tempo) + régression logistique (BCE,
+   scale 250, Adam sur gradient numérique). Params tunés : score, base, prog_a,
+   prog_b, sent_w, hang_w, race, tempo.
+3. **`sprt`/`fsprt`** (harnais) : test séquentiel (likelihood-ratio trinomial,
+   seuils ±2.944 = α/β 5 %) avec arrêt automatique — remplace les seuils
+   manuels « 24/48/104 ».
+
+### Résultats Texel
+
+- Corpus 1 (self-play pur, 7 717 pos.) : loss 0.637→0.624, mais la config
+  suggérée **perd −51 Elo en fuel**. corpus biaisé (le bot s'entraîne à prédire
+  ses propres décisions).
+- Corpus 2 (mixte vs réf., 9 142 pos.) : loss 0.547→0.514, suggestions encore
+  plus extrêmes (hang_w→100, score→17) : biais « camp fort = v5.3 », la
+  régression apprend l'eval v5.3 elle-même plutôt que l'optimum.
+- Application **un paramètre à la fois** (leçon du skill : ne jamais livrer un
+  tuning global d'un coup) : `prog_a=10` semblait gagner (+27 Elo/104 p. fuel)
+  mais le **SPRT formel (elo0=0, elo1=+5, α=β=5 %) est INCONCLUSIF** :
+  106V-112D-22N sur 240 p., llr=−0.01. Les faux positifs de moindre ampleur
+  (`prog_a=8` : +58 cap puis **−37/104 fuel** ; `hang_w=55` : −51 ; `prog_b=11` :
+  −97 ; `sent_w=7` : −51) confirment la nature bruitée du corpus.
+
+Conclusions d'expert :
+- Le label « résultat final » sur corpus mono-bot est trop bruité pour les
+  constantes de second ordre (hang, sent, race) : il faudrait des evals de
+  recherche profonde comme cibles (distillation), pas des W/L de parties.
+- Le Texel W/L sur corpus mono-bot ne produit **aucun paramètre livrable** :
+  la config v5.3 reste inchangée. Pour débloquer : labels de distillation
+  (evals de recherche profonde plutôt que résultats de partie) — chantier
+  documenté ci-dessous.
+
+### Chantier suivant (documenté, non lancé) : #16 policy racine / #18 NNUE
+
+1. **Labels de distillation** : rejouer le corpus en enregistrant (position →
+   score de recherche v5.3 à prof 12+) au lieu du W/L final ; le tuner régresse
+   sur ces scores — c'est la méthode « Lc0→SF » du skill, la seule qui casse
+   le biais mono-bot.
+2. **Policy racine (#16)** : entraîner un petit modèle (20-30 features par coup
+   racine : delta Dijkstra, attaque/défense, hang, rdif…) à prédire le coup
+   choisi par la recherche ; utilisation **ordering racine uniquement**.
+3. **NNUE (#18)** : feature-set (type, camp, case) + hauteur de case +
+   menaces explicites ; accumulator incrémental obligatoire ; ~1-2 M positions
+   d'entraînement nécessaires ; quantification int8. Infra GPU requise —
+   hors de ce sandbox, à documenter dans un RFC dédié.
+
+## Livraison v6
+
+- Config **inchangée** (v5.3) : `Flags::best()` = { hang_w: 30, nmp: false,
+  lmp: false, rdif: true }.
+- Nouveaux outils livrés : `selfdump`, `tools/texel.py`, `sprt`/`fsprt`.
+
+### Session v6 bis — IIR, 3 killers, distillation MSE
+
+| Expérience | Principe | Résultat | Décision |
+|---|---|---|---|
+| `k3=1` (vrais 3 killers) | 3e slot killer, bonus 360k | −14 cap | rejeté |
+| `iir=1` | internal iterative reduction (prof ≥ 4 sans TT) | 0 cap, +7 fuel/48, **SPRT INCONCLUSIF** (106V-118D-16N, llr −0,01/240 p.) | neutre → non livré (code dispo) |
+| `distill` (nouvel outil) | corpus labellisé par scores de recherche (cap 40 k, prof 12) | 6 114 pos. ; MSE 10 145 ; suggestions ≈ valeurs actuelles | outil livré |
+| `prog_a=7` (suggestion distill) | — | +73 cap (penta +64) puis **−58 fuel** | rejeté : 3e faux positif cap sur prog_a |
+
+Leçon structurelle : les scores de recherche v5.3 sont produits par l'eval v5.3 —
+la distillation MSE converge vers les constantes courantes (auto-consistance),
+seule la W/L de parties diversifiées peut les déplacer, et son bruit l'interdit
+à ce jour. Trois méthodes indépendantes (criblage manuel, Texel W/L, distill)
+convergent : **les constantes v5.3 sont un point fixe** — seul un apprentissage
+hors-ligne de plus grande ampleur (policy/NNUE, infra GPU) peut les déplacer.
+
+## Livraison v6 bis
+
+- Config inchangée (v5.3). Nouveaux flags disponibles : k3, iir. Nouvel outil :
+  `distill` (+ support MSE/`--distill` dans tools/texel.py).

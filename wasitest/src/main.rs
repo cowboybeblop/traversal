@@ -118,6 +118,18 @@ fn parse_spec(s: &str) -> Spec {
                 "lmp" => flags.lmp = val != 0,
                 "tt" => flags.ttx = val != 0,
                 "ec" => flags.ecache = val != 0,
+                "rs" => flags.rs = val != 0,
+                "rn" => flags.rn = val != 0,
+                "hb" => flags.hb = val != 0,
+                "cm" => flags.cm = val != 0,
+                "rdif" => flags.rdif = val != 0,
+                "ssafe" => flags.ssafe = val != 0,
+                "ch" => flags.ch = val != 0,
+                "seet" => flags.seet = val != 0,
+                "zc" => flags.zc = val != 0,
+                "mat" => flags.mat = val != 0,
+                "k3" => flags.k3 = val != 0,
+                "iir" => flags.iir = val != 0,
                 _ => {}
             }
         }
@@ -148,11 +160,12 @@ struct ObsPlayer {
     depth: u8,
     nodes: u64,
     moves: u64,
+    last_score: i32,
 }
 
 impl ObsPlayer {
     fn new(h: [u8; SQUARES], spec: Spec, fuel_on: bool, cap: u64, depth: u8) -> ObsPlayer {
-        ObsPlayer { engine: Engine::new(h, spec.cfg, spec.flags), spec, fuel_on, cap, depth, nodes: 0, moves: 0 }
+        ObsPlayer { engine: Engine::new(h, spec.cfg, spec.flags), spec, fuel_on, cap, depth, nodes: 0, moves: 0, last_score: 0 }
     }
 
     fn choose(&mut self, s: &State) -> Move {
@@ -180,7 +193,8 @@ impl ObsPlayer {
         } else {
             set_cap(self.cap);
         }
-        let (mv, _score, _d) = self.engine.search(s, self.depth, harness_stop);
+        let (mv, score, _d) = self.engine.search(s, self.depth, harness_stop);
+        self.last_score = score;
         self.nodes += self.engine.nodes;
         self.moves += 1;
         moves
@@ -295,6 +309,10 @@ fn mirror_run(n: usize, cap: u64, an: &str, sa: Spec, bn: &str, sb: Spec, off: u
     let boards = load_boards();
     let t0 = Instant::now();
     let (mut v, mut d, mut dr) = (0usize, 0usize, 0usize);
+    // Pentanomial sur paires inversées (point de vue de A) : LL, LW/TT, WW/DD, WT, WW.
+    let mut penta = [0usize; 5];
+    let mut penta_nd = 0usize;
+    let mut half: Vec<Option<bool>> = Vec::with_capacity(n / 2);
     let depth = if fuel { MAX_TURNS } else { 40 };
     for i in 0..n {
         let h = boards[(off + i / 2) % boards.len()];
@@ -305,18 +323,191 @@ fn mirror_run(n: usize, cap: u64, an: &str, sa: Spec, bn: &str, sb: Spec, off: u
         } else {
             play(h, |s| pb.choose(s), |s| pa.choose(s))
         };
-        match w {
-            Some(x) if (x == 1) == (i % 2 == 0) => v += 1,
-            Some(_) => d += 1,
+        let a_won = w.map(|x| (x == 1) == (i % 2 == 0));
+        match a_won {
+            Some(true) => v += 1,
+            Some(false) => d += 1,
             None => dr += 1,
+        }
+        if i % 2 == 0 {
+            half.push(a_won);
+        } else {
+            match (half.pop().flatten(), a_won) {
+                (Some(first), Some(second)) => {
+                    penta[match (first, second) {
+                        (false, false) => 0,
+                        (false, true) | (true, false) => 2,
+                        (true, true) => 4,
+                    }] += 1;
+                }
+                _ => penta_nd += 1,
+            }
         }
     }
     let tag = if fuel { "fmirror" } else { "mirror" };
     let cap_s = if fuel { format!("fuel{}", FUEL_BUDGET) } else { format!("cap {}", cap) };
+    // Elo pentanomial : score attendu = (0.25*p0 + 0.5*p2 + p4) / paires.
+    let pairs = penta[0] + penta[1] + penta[2] + penta[3] + penta[4];
+    let penta_elo = if pairs > 0 {
+        let sc = (penta[0] as f64 * 0.0 + penta[2] as f64 * 0.5 + penta[4] as f64 * 1.0
+            + (penta[1] + penta[3]) as f64 * 0.25) / pairs as f64;
+        400.0 * (sc / (1.0 - sc)).log10()
+    } else { 0.0 };
     println!(
-        "{} {} [{}+{}] {} vs {}: {}V-{}D-{}N ({} Elo pour {}) [{:.0} s]",
-        tag, cap_s, off, off + n, an, bn, v, d, dr, elo(v, d, dr), an, t0.elapsed().as_secs_f64()
+        "{} {} [{}+{}] {} vs {}: {}V-{}D-{}N ({} Elo pour {}) | penta LL/LT/TT/WT/WW nd: {}/{}/{}/{}/{} +{} [{:.0} s] pentaElo {:+.0}",
+        tag, cap_s, off, off + n, an, bn, v, d, dr, elo(v, d, dr), an,
+        penta[0], penta[1], penta[2], penta[3], penta[4], penta_nd, t0.elapsed().as_secs_f64(), penta_elo
     );
+}
+
+/// Distillation : dump (position → score de recherche à budget fixe côté trait).
+/// Contrairement au selfdump (résultat de partie), le label est l'avis de la
+/// recherche profonde — cible stable pour la régression des constantes d'eval.
+fn distill(n: usize, off: usize, spec: Spec, cap: u64, depth: u8) {
+    let boards = load_boards();
+    for i in 0..n {
+        let h = boards[(off + i) % boards.len()];
+        let mut p = ObsPlayer::new(h, spec, false, cap, depth);
+        let mut s = new_game(h);
+        while !s.over {
+            let m = p.choose(&s);
+            // score après recherche, côté trait courant (= joueur qui vient de chercher)
+            let z = p.last_score;
+            let mut line = String::new();
+            line.push_str(&format!("{} {} {} |", s.to_move, s.scores[0] as u32, s.scores[1] as u32));
+            for j in 0..SQUARES {
+                line.push(' ');
+                line.push_str(&h[j].to_string());
+            }
+            line.push_str(" |");
+            for pc in s.pieces() {
+                line.push_str(&format!(" {}:{}:{}", pc.owner, pc.kind.strength(), pc.sq));
+            }
+            println!("{} | {}", line, z);
+            s = apply_move(&s, &m);
+        }
+    }
+}
+
+/// SPRT (test séquentiel de probabilité ratio, style Fishtest) sur miroir A/B.
+/// Hypothèses elo0 < vrai < elo1 ; s'arrête dès acceptation/rejet. Score attendu
+/// via logistic(E/400). Likelihood-ratio sur loi trinomiale (V/D/N, nulle=0.5).
+fn sprt_mirror(
+    n_max: usize,
+    cap: u64,
+    an: &str,
+    sa: Spec,
+    bn: &str,
+    sb: Spec,
+    off: usize,
+    fuel: bool,
+    elo0: f64,
+    elo1: f64,
+) {
+    let boards = load_boards();
+    let t0 = Instant::now();
+    let depth = if fuel { MAX_TURNS } else { 40 };
+    let (mut v, mut d, mut dr) = (0usize, 0usize, 0usize);
+    // proba attendue de victoire sous H (nulle comptée 0.5)
+    let pwin = |elo: f64| 1.0 / (1.0 + (-elo / 400.0).exp());
+    let p0 = pwin(elo0);
+    let p1 = pwin(elo1);
+    let mut llr = 0.0f64;
+    let mut accepted: Option<bool> = None;
+    let mut i = 0usize;
+    while i < n_max {
+        let h = boards[(off + i / 2) % boards.len()];
+        let mut pa = ObsPlayer::new(h, sa, fuel, cap, depth);
+        let mut pb = ObsPlayer::new(h, sb, fuel, cap, depth);
+        let (w, _) = if i % 2 == 0 {
+            play(h, |s| pa.choose(s), |s| pb.choose(s))
+        } else {
+            play(h, |s| pb.choose(s), |s| pa.choose(s))
+        };
+        match w {
+            Some(x) if (x == 1) == (i % 2 == 0) => {
+                v += 1;
+                // V : P(V) = p, P(D) = 1-p
+                llr += (p1 / p0).ln() + ((1.0 - p1) / (1.0 - p0)).ln();
+            }
+            Some(_) => {
+                d += 1;
+                llr += ((1.0 - p1) / (1.0 - p0)).ln() * 2.0;
+            }
+            None => {
+                dr += 1;
+            }
+        }
+        i += 1;
+        // seuils : alpha=beta=0.05 → L > 2.944 accepte H1, < -2.944 accepte H0
+        if llr >= 2.944 {
+            accepted = Some(true);
+            break;
+        }
+        if llr <= -2.944 {
+            accepted = Some(false);
+            break;
+        }
+    }
+    let tag = if fuel { "fsprt" } else { "sprt" };
+    let cap_s = if fuel { format!("fuel{}", FUEL_BUDGET) } else { format!("cap {}", cap) };
+    match accepted {
+        Some(true) => println!(
+            "{} {} [{}+{}] {} vs {}: H1 ACCEPTÉE (gain) — {}V-{}D-{}N llr={:.2} en {} p. [{:.0} s]",
+            tag, cap_s, off, off + i, an, bn, v, d, dr, llr, i, t0.elapsed().as_secs_f64()
+        ),
+        Some(false) => println!(
+            "{} {} [{}+{}] {} vs {}: H0 ACCEPTÉE (pas de gain) — {}V-{}D-{}N llr={:.2} en {} p. [{:.0} s]",
+            tag, cap_s, off, off + i, an, bn, v, d, dr, llr, i, t0.elapsed().as_secs_f64()
+        ),
+        None => println!(
+            "{} {} [{}+{}] {} vs {}: INCONCLUSIF — {}V-{}D-{}N llr={:.2} en {} p. [{:.0} s]",
+            tag, cap_s, off, off + i, an, bn, v, d, dr, llr, i, t0.elapsed().as_secs_f64()
+        ),
+    }
+}
+
+/// Self-play avec dump de positions labellisées pour le tuning Texel.
+/// Format par ligne : to_move ply scores finished | hauteurs | pièces | résultat W/D/L côté trait.
+/// Le résultat est écrit après coup : W=1, D=0.5, L=0 du point de vue du joueur au trait.
+fn selfdump(n: usize, off: usize, spec: Spec) {
+    let boards = load_boards();
+    let depth = MAX_TURNS;
+    for i in 0..n {
+        let h = boards[(off + i) % boards.len()];
+        // Une partie sur deux contre un bot de référence (diversité du corpus).
+        let vs_ref = i % 2 == 1;
+        let lvl = 3u8 + (i % 2) as u8;
+        let seed = 0x5A17u64 + i as u64;
+        let mut p = ObsPlayer::new(h, spec, true, 0, depth);
+        let mut r = RefPlayer::new(if vs_ref { lvl } else { 3 }, seed);
+        let mut s = new_game(h);
+        let mut hist: Vec<State> = Vec::new();
+        while !s.over {
+            hist.push(s.clone());
+            let m = if vs_ref && s.to_move == 2 { r.choose(&s) } else { p.choose(&s) };
+            s = apply_move(&s, &m);
+        }
+        // résultat du point de vue du trait de chaque position
+        for st in &hist {
+            let z = match s.winner {
+                Some(w) if w == st.to_move => 1.0f64,
+                Some(_) => 0.0,
+                None => 0.5,
+            };
+            let mut line = String::new();
+            line.push_str(&format!("{} {} {} {} |", st.to_move, st.ply, st.scores[0] as u32, st.scores[1] as u32));
+            for j in 0..SQUARES {
+                line.push(' ');
+                line.push_str(&h[j].to_string());
+            }
+            line.push_str(" |");
+            for pc in st.pieces() {
+                line.push_str(&format!(" {}:{}:{}", pc.owner, pc.kind.strength(), pc.sq));
+            }
+            println!("{} | {}", line, z);
+        }
+    }
 }
 
 /// Duel Obsidienne (spec) contre bot de référence niveau `lvl`.
@@ -505,6 +696,18 @@ fn main() {
     let cmd = arg_s(0, "sanity");
     match cmd.as_str() {
         "sanity" => sanity(arg(1, 4)),
+        "selfdump" => selfdump(arg(1, 10), arg(2, 0), parse_spec(&arg_s(3, "default"))),
+        "distill" => distill(arg(1, 10), arg(2, 0), parse_spec(&arg_s(3, "default")), arg(4, 40_000) as u64, arg_u8(5, 12)),
+        "sprt" => sprt_mirror(
+            arg(1, 200), arg(2, 15_000) as u64, &arg_s(3, "default"), parse_spec(&arg_s(3, "default")),
+            &arg_s(4, "default"), parse_spec(&arg_s(4, "default")), arg(5, 0), false,
+            arg(6, 0) as f64 / 100.0, arg(7, 50) as f64 / 100.0,
+        ),
+        "fsprt" => sprt_mirror(
+            arg(1, 200), 0, &arg_s(2, "default"), parse_spec(&arg_s(2, "default")),
+            &arg_s(3, "default"), parse_spec(&arg_s(3, "default")), arg(4, 0), true,
+            arg(5, 0) as f64 / 100.0, arg(6, 50) as f64 / 100.0,
+        ),
         "speed" => speed(arg(1, 4), arg_u8(2, 6), parse_spec(&arg_s(3, "default"))),
         "duel" => duel_run(
             arg_u8(1, 5),
