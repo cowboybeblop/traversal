@@ -387,6 +387,27 @@ pub fn eval(s: &State, side: u8, cfg: &EvalCfg, costs: &[[u16; SQUARES]; 2], fla
         }
         total += 12 * m;
     }
+    // Contrôle du relief (hi) : la hauteur ne paie qu'en interaction de combat.
+    // Pour chaque paire de pièces adjacentes adverses, le camp en hauteur
+    // gagne l'avantage tactique (atk/def ± Δh dans la règle de combat).
+    if flags.hi {
+        for p in s.pieces() {
+            for &nb in neighbors_of(p.sq) {
+                if let Some(j) = s.at(nb) {
+                    let e = s.piece(j);
+                    if e.owner == p.owner {
+                        continue;
+                    }
+                    let dh = s.heights[p.sq as usize] as i32 - s.heights[nb as usize] as i32;
+                    if dh > 0 {
+                        // p domine e : avantage pour le camp de p
+                        let v = dh * 75;
+                        total += if p.owner == side { v } else { -v };
+                    }
+                }
+            }
+        }
+    }
     total += if s.to_move == side { cfg.tempo } else { -cfg.tempo };
     total
 }

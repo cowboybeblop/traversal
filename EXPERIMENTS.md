@@ -430,3 +430,26 @@ aucun gain < +10 Elo n'est vérifiable à 240 parties.
 ## Livraison v10
 
 - Config inchangée (v5.3 + book). Flag `pcut` livré dans le code (off).
+
+### Session v11 — le relief de Traversal (3e tour, spécifique au jeu)
+
+Dernière faille apparente de l'eval : aucun terme de hauteur, alors que la règle
+de combat (atk/def ± hauteur) en fait l'arme centrale du jeu. Trois lectures :
+
+| Variante | Principe | Résultat | Décision |
+|---|---|---|---|
+| `hi` v1 (25/pc²) | prime de hauteur quadratique (relief global) | **−66 cap**, penta −102 | rejetée : fait dévier du chemin Dijkstra (l'or = la sortie, pas la colline) |
+| `hi` v2 (25·Δh) | domination locale : Δh > 0 par paire adjacente adverse | +22 cap, penta +17 | trop faible (< seuil de mesure) |
+| `hi` v3 (75·Δh) | idem ×3 | **−36 cap** | rejetée |
+
+Lecture : la domination de hauteur est DÉJÀ capturée implicitement — le `hang`
+voit les menaces (atk ≥ def inclut Δh), la quiescence résout les attaques
+légales, et le Dijkstra pondère |Δh|+1. Toute valorisation explicite du relief
+est redondante avec ces trois canaux et dégrade en détournant les pièces de
+leur course. L'absence apparente de terme de hauteur était en fait une
+conséquence d'une eval déjà saturée — conclusion définitive du point fixe.
+
+## Livraison v11
+
+- Config inchangée (v5.3 + book). Flag `hi` livré (off).
+- Fin de la 3e vague de recherche : toutes les voies mesurables sont épuisées.

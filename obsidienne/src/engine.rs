@@ -80,11 +80,13 @@ pub struct Flags {
     pub racc: bool,
     /// ProbCut : recherche superficielle prof 2 ≥ beta + marge → couper
     pub pcut: bool,
+    /// contrôle du relief : prime par point de hauteur occupé (attaque/défense)
+    pub hi: bool,
 }
 
 impl Default for Flags {
     fn default() -> Flags {
-        Flags { aspiration: false, nmp: true, lmr: true, fut: true, lmp: true, ttx: true, support_w: 0, hang_w: 0, blocked: 0, ecache: false, rs: false, rn: false, hb: false, cm: false, rdif: false, ssafe: false, ch: false, seet: false, zc: false, mat: false, k3: false, iir: false, ptab: false, hangtab: false, hangd: false, crit: false, lmr2: false, racc: false, pcut: false }
+        Flags { aspiration: false, nmp: true, lmr: true, fut: true, lmp: true, ttx: true, support_w: 0, hang_w: 0, blocked: 0, ecache: false, rs: false, rn: false, hb: false, cm: false, rdif: false, ssafe: false, ch: false, seet: false, zc: false, mat: false, k3: false, iir: false, ptab: false, hangtab: false, hangd: false, crit: false, lmr2: false, racc: false, pcut: false, hi: false }
     }
 }
 
