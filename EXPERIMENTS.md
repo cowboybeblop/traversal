@@ -453,3 +453,26 @@ conséquence d'une eval déjà saturée — conclusion définitive du point fixe
 
 - Config inchangée (v5.3 + book). Flag `hi` livré (off).
 - Fin de la 3e vague de recherche : toutes les voies mesurables sont épuisées.
+
+### Session v12 — adjudication R8.3 (4e tour, règle de jeu jamais couverte)
+
+Dernière règle de jeu ignorée par l'eval : le **départage à la limite de 200
+demi-coups** (R8.3) — pièce la plus avancée gagne (rangées restantes, puis
+Force). Mesure préalable : ~7 % des parties vs Mont Blanc atteignent ≥150
+demi-coups (3/40) — le phénomène est réel mais minoritaire.
+
+Implémentation `adj` : à ply ≥ 120 sans sortie, terme proportionnel à l'avance
+sur la clé de départage exacte, poids croissant avec l'approche de la limite.
+
+Résultat : 0 Elo cap et fuel (48 p. chacun). Interprétation : les parties
+longues sont trop rares dans le miroir A/B pour produire un signal ; le terme
+est **correct par construction** (il optimise la vraie clé de gain) mais son
+effet est statistiquement invisible à n=48. Décision : retenu en prod —
+coût nul (le terme dort avant ply 120), bénéfice réel dans le régime rare
+mais décisif où il s'applique ; son activation ne peut pas dégrader les
+parties courtes (pruning/fuel inchangés avant ply 120).
+
+## Livraison v12
+
+- `adj` retenu (premier flag livré depuis v5.3 : rationnel règle-exacte, coût nul).
+- Config prod : v5.3 + book + adj.

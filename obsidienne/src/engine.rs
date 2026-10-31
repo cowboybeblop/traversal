@@ -82,11 +82,14 @@ pub struct Flags {
     pub pcut: bool,
     /// contrôle du relief : prime par point de hauteur occupé (attaque/défense)
     pub hi: bool,
+    /// adjudication R8.3 : en fin de partie bloquée, valoriser la pièce la plus
+    /// avancée (clé de départage exacte)
+    pub adj: bool,
 }
 
 impl Default for Flags {
     fn default() -> Flags {
-        Flags { aspiration: false, nmp: true, lmr: true, fut: true, lmp: true, ttx: true, support_w: 0, hang_w: 0, blocked: 0, ecache: false, rs: false, rn: false, hb: false, cm: false, rdif: false, ssafe: false, ch: false, seet: false, zc: false, mat: false, k3: false, iir: false, ptab: false, hangtab: false, hangd: false, crit: false, lmr2: false, racc: false, pcut: false, hi: false }
+        Flags { aspiration: false, nmp: true, lmr: true, fut: true, lmp: true, ttx: true, support_w: 0, hang_w: 0, blocked: 0, ecache: false, rs: false, rn: false, hb: false, cm: false, rdif: false, ssafe: false, ch: false, seet: false, zc: false, mat: false, k3: false, iir: false, ptab: false, hangtab: false, hangd: false, crit: false, lmr2: false, racc: false, pcut: false, hi: false, adj: false }
     }
 }
 
@@ -100,7 +103,7 @@ impl Flags {
     /// `blocked` et le cache d'évaluations sont écartés : le coût fuel de
     /// `blocked` (+2 Dijkstra/éval) annule son gain, le cache est neutre.
     pub fn best() -> Flags {
-        Flags { hang_w: 30, nmp: false, lmp: false, rdif: true, ..Flags::default() }
+        Flags { hang_w: 30, nmp: false, lmp: false, rdif: true, adj: true, ..Flags::default() }
     }
 }
 

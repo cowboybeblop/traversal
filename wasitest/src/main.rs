@@ -138,6 +138,7 @@ fn parse_spec(s: &str) -> Spec {
                 "racc" => flags.racc = val != 0,
                 "pcut" => flags.pcut = val != 0,
                 "hi" => flags.hi = val != 0,
+                "adj" => flags.adj = val != 0,
                 "ptabt" => {
                     // table apprise par distillation (tools/ptab_tune.py, corpus 6 114 pos.)
                     flags.ptab = val != 0;
@@ -677,21 +678,27 @@ fn duel_book(lvl: u8, n: usize, off: usize) {
     let boards = load_boards();
     let t0 = Instant::now();
     let (mut v, mut d, mut dr) = (0usize, 0usize, 0usize);
+    let mut long_games = 0usize;
+    let mut last_ply = 0u16;
     for i in 0..n {
         let h = boards[(off + i / 2) % boards.len()];
         let seed = BASE_SEED + i as u64;
         let mut pr = RefPlayer::new(lvl, seed);
         let obs_side = if i % 2 == 0 { 1u8 } else { 2u8 };
-        let (w, _) = play_prod_vs(h, |s| pr.choose(s), seed, obs_side);
+        let (w, pl) = play_prod_vs(h, |s| pr.choose(s), seed, obs_side);
+        last_ply = pl;
         match w {
             Some(x) if x == obs_side => v += 1,
             Some(_) => d += 1,
             None => dr += 1,
         }
+        if last_ply >= 150 {
+            long_games += 1;
+        }
     }
     println!(
-        "duelb L{} fuel1625000000 [{}+{}]: {}V-{}D-{}N ({} Elo) [{:.0} s]",
-        lvl, off, off + n, v, d, dr, elo(v, d, dr), t0.elapsed().as_secs_f64()
+        "duelb L{} fuel1625000000 [{}+{}]: {}V-{}D-{}N ({} Elo) [{:.0} s] longues(≥150): {}/{}",
+        lvl, off, off + n, v, d, dr, elo(v, d, dr), t0.elapsed().as_secs_f64(), long_games, n
     );
 }
 

@@ -2,7 +2,7 @@
 //! et termes optionnels activés par `Flags` (soutien, menace, terrain barré).
 
 use traversal_bot::core::config::{SIZE, SQUARES};
-use traversal_bot::core::movegen::{neighbors_of, step_cost};
+use traversal_bot::core::movegen::{neighbors_of, rows_to_go, step_cost};
 use traversal_bot::core::{legal_moves, Kind, MoveKind, State};
 
 use crate::engine::{Flags, WIN};
@@ -406,6 +406,25 @@ pub fn eval(s: &State, side: u8, cfg: &EvalCfg, costs: &[[u16; SQUARES]; 2], fla
                     }
                 }
             }
+        }
+    }
+    // Adjudication R8.3 : en fin de partie sans sortie, le départage se joue
+    // sur la pièce la plus avancée (rangées restantes, puis Force). Au-delà de
+    // ply ≥ 120, valoriser l'avance sur cette clé exacte.
+    if flags.adj && s.finished == 0 && s.ply >= 120 {
+        let mut best: [i32; 2] = [i32::MAX, i32::MAX];
+        for p in s.pieces() {
+            let o = (p.owner - 1) as usize;
+            // clé de départage : rangées × 10, Force départage
+            let k = rows_to_go(p.owner, p.sq) as i32 * 10 - p.kind.strength() as i32;
+            best[o] = best[o].min(k);
+        }
+        let mine = best[side as usize - 1];
+        let theirs = best[if side == 1 { 1 } else { 0 }];
+        if mine < i32::MAX && theirs < i32::MAX {
+            // avance en unités de départage × poids croissant avec la fin
+            let urgency = ((s.ply as i32 - 120) / 10).clamp(0, 8) as i32;
+            total += (theirs - mine) * (6 + 2 * urgency);
         }
     }
     total += if s.to_move == side { cfg.tempo } else { -cfg.tempo };
