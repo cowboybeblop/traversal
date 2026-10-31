@@ -173,6 +173,28 @@ fn sentinel_race(s: &State, side: u8, first: &[i32; 2], sentinel: &[i32; 2], cfg
     }
 }
 
+/// Course graduée (rdif) : différentiel de temps de sortie Sentinelle, au lieu
+/// du bonus binaire. Rendu nul si une sortie quelconque a déjà eu lieu.
+fn sentinel_race_grad(s: &State, side: u8, sentinel: &[i32; 2], cfg: &EvalCfg) -> i32 {
+    if s.finished != 0 {
+        return 0;
+    }
+    let plies = |owner: u8, turns: i32| match turns {
+        i32::MAX => i32::MAX,
+        t if s.to_move == owner => 2 * t - 1,
+        t => 2 * t,
+    };
+    let other = if side == 1 { 2 } else { 1 };
+    let mine = plies(side, sentinel[side as usize - 1]);
+    let theirs = plies(other, sentinel[other as usize - 1]);
+    if mine >= i32::MAX / 2 || theirs >= i32::MAX / 2 {
+        return 0;
+    }
+    let d = theirs as i64 - mine as i64;
+    // avance en plies → prime proportionnelle, cap ±race
+    (d as i32 * (cfg.race / 4)).clamp(-cfg.race, cfg.race)
+}
+
 /// Le camp au trait peut-il sortir une pièce tout de suite ?
 /// (garde du null-move : si l'adversaire peut sortir, passer est interdit.)
 pub fn can_exit_now(s: &State) -> bool {
@@ -270,7 +292,29 @@ pub fn eval(s: &State, side: u8, cfg: &EvalCfg, costs: &[[u16; SQUARES]; 2], fla
     }
 
     if nobody_out {
-        total += sentinel_race(s, side, &first, &sentinel, cfg);
+        if flags.rdif {
+            total += sentinel_race_grad(s, side, &sentinel, cfg);
+        } else {
+            total += sentinel_race(s, side, &first, &sentinel, cfg);
+        }
+    }
+    // Sûreté de la Sentinelle : pénalité si un ennemi capable de la capturer est proche.
+    if flags.ssafe && nobody_out {
+        for p in s.pieces() {
+            if p.kind == Kind::Sentinel && p.owner == side {
+                let mut worst = 0i32;
+                for e in s.pieces() {
+                    if e.owner != side {
+                        let dist = (e.sq / 10).abs_diff(p.sq / 10) + (e.sq % 10).abs_diff(p.sq % 10);
+                        if e.kind.strength() + 3 > p.kind.strength() {
+                            // menace croissante quand la distance tombe
+                            worst = worst.max(20 - 4 * dist as i32);
+                        }
+                    }
+                }
+                total -= worst.max(0) * 3;
+            }
+        }
     }
     total += if s.to_move == side { cfg.tempo } else { -cfg.tempo };
     total

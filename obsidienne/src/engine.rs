@@ -42,11 +42,23 @@ pub struct Flags {
     pub blocked: i32,
     /// cache d'évaluations indexé par Zobrist (états non terminaux seulement)
     pub ecache: bool,
+    /// racine : conserver le best move des itérations complétées (stabilité fuel)
+    pub rs: bool,
+    /// racine : ne re-rechercher en profondeur que les 4 meilleurs coups
+    pub rn: bool,
+    /// history : malus sur les coups explorés sans devenir best
+    pub hb: bool,
+    /// counter-move : le coup qui a répondu au coup précédent est trié en tête
+    pub cm: bool,
+    /// race graduée : différentiel de Dijkstra Sentinelle au lieu du ±200 binaire
+    pub rdif: bool,
+    /// sûreté de la Sentinelle : distance à l'ennemi le plus proche capable de la battre
+    pub ssafe: bool,
 }
 
 impl Default for Flags {
     fn default() -> Flags {
-        Flags { aspiration: false, nmp: true, lmr: true, fut: true, lmp: true, ttx: true, support_w: 0, hang_w: 0, blocked: 0, ecache: false }
+        Flags { aspiration: false, nmp: true, lmr: true, fut: true, lmp: true, ttx: true, support_w: 0, hang_w: 0, blocked: 0, ecache: false, rs: false, rn: false, hb: false, cm: false, rdif: false, ssafe: false }
     }
 }
 
@@ -55,12 +67,12 @@ const ECACHE_N: usize = 1 << 18;
 
 impl Flags {
     /// Ensemble validé par criblage A/B (voir EXPERIMENTS.md) :
-    /// hang=30 (pièces menacées), sans null-move ni LMP (les deux sont
-    /// perdants en miroir fuel sur ce build). `blocked` et le cache d'évaluations
-    /// ont été écartés : le coût fuel de `blocked` (+2 Dijkstra/éval) annule son
-    /// gain, le cache est neutre une fois NMP coupé.
+    /// hang=30 (pièces menacées), sans null-move ni LMP (perdants en miroir
+    /// fuel), race graduée (différentiel de sortie Sentinelle, +64 Elo/104 p.).
+    /// `blocked` et le cache d'évaluations sont écartés : le coût fuel de
+    /// `blocked` (+2 Dijkstra/éval) annule son gain, le cache est neutre.
     pub fn best() -> Flags {
-        Flags { hang_w: 30, nmp: false, lmp: false, ..Flags::default() }
+        Flags { hang_w: 30, nmp: false, lmp: false, rdif: true, ..Flags::default() }
     }
 }
 
@@ -97,6 +109,10 @@ pub struct Engine {
     root_scores: [i32; ROOT_CAP],
     /// cache d'évaluations direct-mapped (clé Zobrist → valeur), si `flags.ecache`.
     ecache: Vec<(u64, i32)>,
+    /// counter-move : réponse enregistrée par (pièce, case) du coup précédent.
+    cmoves: [[u32; SQUARES]; 6],
+    /// dernier coup packé joué (pour counter-move), par ply.
+    last_mv: [u32; MAX_PLY + 2],
 }
 
 impl Engine {
@@ -138,6 +154,8 @@ impl Engine {
             aborted: false,
             root_scores: [0; ROOT_CAP],
             ecache: vec![(0u64, 0i32); ECACHE_N],
+            cmoves: [[NO_MOVE; SQUARES]; 6],
+            last_mv: [NO_MOVE; MAX_PLY + 2],
         }
     }
 
@@ -220,6 +238,13 @@ impl Engine {
             k += 400_000;
         } else if packed == self.killers[ply][1] {
             k += 380_000;
+        }
+        if self.flags.cm && m.kind == MoveKind::Move && ply >= 1 {
+            let p = s.piece(m.piece);
+            let pk = kind3(p.kind) * 2 + (p.owner as usize - 1);
+            if self.cmoves[pk][p.sq as usize] == packed {
+                k += 200_000;
+            }
         }
         k
     }
@@ -409,11 +434,21 @@ impl Engine {
                         best = sc;
                         best_packed = pack_move(&m);
                     }
+                    if self.flags.hb && m.kind == MoveKind::Move && searched > 1 && sc <= alpha {
+                        let p = s.piece(m.piece);
+                        let h = &mut self.history[kind3(p.kind)][p.sq as usize][m.to as usize];
+                        *h = h.saturating_sub((depth as i32 * depth as i32) as u32 / 4);
+                    }
                     if best > alpha {
                         alpha = best;
                         if alpha >= beta {
                             if m.kind == MoveKind::Move {
                                 self.bump_history(s, &m, ply, depth);
+                                if self.flags.cm {
+                                    let p = s.piece(m.piece);
+                                    let k = kind3(p.kind) * 2 + (p.owner as usize - 1);
+                                    if ply >= 1 { self.cmoves[k][p.sq as usize] = pack_move(&m); }
+                                }
                             }
                             break;
                         }
@@ -575,6 +610,10 @@ impl Engine {
                 self.root_scores = scores;
                 // Re-tri : les meilleurs d'abord, ordre stable.
                 order.sort_by_key(|&mi| std::cmp::Reverse(self.root_scores[mi]));
+                // Concentration : aux grandes profondeurs, ne garder que le top 4.
+                if self.flags.rn && depth >= 6 && n > 4 {
+                    order.truncate(4);
+                }
             }
         }
 

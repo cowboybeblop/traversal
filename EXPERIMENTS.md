@@ -195,3 +195,31 @@ La quiescence Exit/Attack + delta pruning est déjà bien dimensionnée : toute
 extension paie son coût en nœuds sans gain stratégique mesurable. Le moteur est
 sur un optimum local solide ; les prochains gains devront venir de changements
 plus structurels (policy racine, terms d'éval appris), pas de micro-tuning.
+
+## Session v5.3 — pentanomial, race graduée (rdif)
+
+Infrastructure : scoring pentanomial ajouté au harnais (paires inversées LL/LT/TT/WT/WW
++ Elo pentanomial) — filtre les faux positifs du binomial sur petits échantillons.
+
+Flags implémentés et criblés (cap 48 p., puis fuel 48, puis 100+ pour finalistes) :
+
+| Flag | Principe | Cap 48 | Fuel | Décision |
+|---|---|---|---|---|
+| **`rdif=1`** | race graduée : différentiel de plies de sortie Sentinelle (cap ±race), au lieu du ±200 binaire | **+129, penta +120** | +36/48 puis **+64 (54V-35D-15N)/104 p., penta +84** | ✅ **RETENU** |
+| `hb=1` | malus history sur coups silencieux perdants | +14, penta 0 | — | rejeté (bruit) |
+| `cm=1` | counter-move table (12 Ko) | +14 puis −44 | — | rejeté |
+| `ssafe=1` | sûreté Sentinelle (distance aux ennemis capables de capturer) | −44 puis −29 | — | rejeté |
+| `rn=1` | concentration racine top-4 dès prof 6 | 0, penta 0 | 0, penta −17 | rejeté |
+| `rs=1` | stabilité racine | — | — | déjà le comportement par défaut (retrait du flag) |
+| `rdif` + `race=300` / `race=120` | re-tuning du cap gradué | +51/+44 cap | **−73** / 0 | bruit cap ; race=200 confirmé |
+
+Note : le flag `rs` a révélé au passage que le best move n'était déjà mis à jour que
+sur itération complétée — la « stabilité fuel » existait ; le flag a été retiré.
+
+Validation externe `duelf 5` (Mont Blanc L5), `hang=30,nmp=0,lmp=0,rdif=1` :
+- [0+36] 32V-4D-0N ; [40+76] 31V-4D-1N ; [120+156] 32V-4D-0N
+- Cumul 108 p. : **95V-12D-1N ≈ +350 Elo** (v5.2 : ~+300/48 p.)
+
+## Livraison
+
+- `Flags::best()` = { hang_w: 30, nmp: false, lmp: false, rdif: true }.

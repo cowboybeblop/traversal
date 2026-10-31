@@ -118,6 +118,12 @@ fn parse_spec(s: &str) -> Spec {
                 "lmp" => flags.lmp = val != 0,
                 "tt" => flags.ttx = val != 0,
                 "ec" => flags.ecache = val != 0,
+                "rs" => flags.rs = val != 0,
+                "rn" => flags.rn = val != 0,
+                "hb" => flags.hb = val != 0,
+                "cm" => flags.cm = val != 0,
+                "rdif" => flags.rdif = val != 0,
+                "ssafe" => flags.ssafe = val != 0,
                 _ => {}
             }
         }
@@ -295,6 +301,10 @@ fn mirror_run(n: usize, cap: u64, an: &str, sa: Spec, bn: &str, sb: Spec, off: u
     let boards = load_boards();
     let t0 = Instant::now();
     let (mut v, mut d, mut dr) = (0usize, 0usize, 0usize);
+    // Pentanomial sur paires inversées (point de vue de A) : LL, LW/TT, WW/DD, WT, WW.
+    let mut penta = [0usize; 5];
+    let mut penta_nd = 0usize;
+    let mut half: Vec<Option<bool>> = Vec::with_capacity(n / 2);
     let depth = if fuel { MAX_TURNS } else { 40 };
     for i in 0..n {
         let h = boards[(off + i / 2) % boards.len()];
@@ -305,17 +315,40 @@ fn mirror_run(n: usize, cap: u64, an: &str, sa: Spec, bn: &str, sb: Spec, off: u
         } else {
             play(h, |s| pb.choose(s), |s| pa.choose(s))
         };
-        match w {
-            Some(x) if (x == 1) == (i % 2 == 0) => v += 1,
-            Some(_) => d += 1,
+        let a_won = w.map(|x| (x == 1) == (i % 2 == 0));
+        match a_won {
+            Some(true) => v += 1,
+            Some(false) => d += 1,
             None => dr += 1,
+        }
+        if i % 2 == 0 {
+            half.push(a_won);
+        } else {
+            match (half.pop().flatten(), a_won) {
+                (Some(first), Some(second)) => {
+                    penta[match (first, second) {
+                        (false, false) => 0,
+                        (false, true) | (true, false) => 2,
+                        (true, true) => 4,
+                    }] += 1;
+                }
+                _ => penta_nd += 1,
+            }
         }
     }
     let tag = if fuel { "fmirror" } else { "mirror" };
     let cap_s = if fuel { format!("fuel{}", FUEL_BUDGET) } else { format!("cap {}", cap) };
+    // Elo pentanomial : score attendu = (0.25*p0 + 0.5*p2 + p4) / paires.
+    let pairs = penta[0] + penta[1] + penta[2] + penta[3] + penta[4];
+    let penta_elo = if pairs > 0 {
+        let sc = (penta[0] as f64 * 0.0 + penta[2] as f64 * 0.5 + penta[4] as f64 * 1.0
+            + (penta[1] + penta[3]) as f64 * 0.25) / pairs as f64;
+        400.0 * (sc / (1.0 - sc)).log10()
+    } else { 0.0 };
     println!(
-        "{} {} [{}+{}] {} vs {}: {}V-{}D-{}N ({} Elo pour {}) [{:.0} s]",
-        tag, cap_s, off, off + n, an, bn, v, d, dr, elo(v, d, dr), an, t0.elapsed().as_secs_f64()
+        "{} {} [{}+{}] {} vs {}: {}V-{}D-{}N ({} Elo pour {}) | penta LL/LT/TT/WT/WW nd: {}/{}/{}/{}/{} +{} [{:.0} s] pentaElo {:+.0}",
+        tag, cap_s, off, off + n, an, bn, v, d, dr, elo(v, d, dr), an,
+        penta[0], penta[1], penta[2], penta[3], penta[4], penta_nd, t0.elapsed().as_secs_f64(), penta_elo
     );
 }
 
