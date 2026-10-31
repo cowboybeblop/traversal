@@ -78,11 +78,13 @@ pub struct Flags {
     pub lmr2: bool,
     /// extension de course : les deux Sentinelles à ≤ 3 tours de sortie → +1 ply
     pub racc: bool,
+    /// ProbCut : recherche superficielle prof 2 ≥ beta + marge → couper
+    pub pcut: bool,
 }
 
 impl Default for Flags {
     fn default() -> Flags {
-        Flags { aspiration: false, nmp: true, lmr: true, fut: true, lmp: true, ttx: true, support_w: 0, hang_w: 0, blocked: 0, ecache: false, rs: false, rn: false, hb: false, cm: false, rdif: false, ssafe: false, ch: false, seet: false, zc: false, mat: false, k3: false, iir: false, ptab: false, hangtab: false, hangd: false, crit: false, lmr2: false, racc: false }
+        Flags { aspiration: false, nmp: true, lmr: true, fut: true, lmp: true, ttx: true, support_w: 0, hang_w: 0, blocked: 0, ecache: false, rs: false, rn: false, hb: false, cm: false, rdif: false, ssafe: false, ch: false, seet: false, zc: false, mat: false, k3: false, iir: false, ptab: false, hangtab: false, hangd: false, crit: false, lmr2: false, racc: false, pcut: false }
     }
 }
 
@@ -469,6 +471,23 @@ impl Engine {
                 if a <= 14 && b <= 14 && (a - b).abs() <= 2 {
                     depth += 1;
                 }
+            }
+        }
+        // ProbCut (Buro) : une recherche réduite (prof 2, fenêtre large) qui
+        // dépasse beta d'une marge prédit un fail-high de la recherche pleine.
+        // Utile là où le null-move échoue (ici : NMP perdant, régime Othello).
+        if self.flags.pcut && depth >= 4 && (beta - alpha) == 1 && beta.abs() < WIN / 2 {
+            let margin = 320 + 80 * (depth as i32 - 4);
+            let probe_beta = beta + margin;
+            match self.negamax(s, 2, probe_beta - 1, probe_beta, ply) {
+                None => return None,
+                Some(sc) if sc >= probe_beta => {
+                    if self.flags.ttx {
+                        self.tt.store(key, sc, depth as u8, 1, NO_MOVE);
+                    }
+                    return Some(sc);
+                }
+                Some(_) => {}
             }
         }
         let n = moves.len();

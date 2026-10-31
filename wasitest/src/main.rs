@@ -136,6 +136,7 @@ fn parse_spec(s: &str) -> Spec {
                 "crit" => flags.crit = val != 0,
                 "lmr2" => flags.lmr2 = val != 0,
                 "racc" => flags.racc = val != 0,
+                "pcut" => flags.pcut = val != 0,
                 "ptabt" => {
                     // table apprise par distillation (tools/ptab_tune.py, corpus 6 114 pos.)
                     flags.ptab = val != 0;

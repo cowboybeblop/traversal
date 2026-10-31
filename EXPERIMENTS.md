@@ -409,3 +409,24 @@ démontré statistiquement — documenté comme tel.
 
 - Book embarqué (12 demi-coups, 200 plateaux). Config moteur inchangée (v5.3).
 - Outils : `bookgen`, `duelb`. `dist/obsidienne.wasm` 257 Ko, prodpath OK.
+
+### Session v10 — ProbCut (2e tour de web search)
+
+Piste : ProbCut (Buro 1995) brille dans les jeux où le null-move échoue —
+exactement le régime de Traversal (NMP perdant, cf. v5.2). Implémentation :
+probe prof 2 à fenêtre beta+marge aux nœuds non-PV de prof ≥ 4.
+
+| Variante | Marge | Résultat | Décision |
+|---|---|---|---|
+| `pcut` v1 | 180 + 60·(d−4) | +14 cap, **−29 fuel** | rejetée (le probe coûte plus qu'il n'économise) |
+| `pcut` v2 | 320 + 80·(d−4) | +73 fuel/48 (penta +99), puis **SPRT INCONCLUSIF** (113V-110D-17N, llr −0,01/240 p.) | non livrée |
+
+Interprétation : à parité fuel, le probe prof-2 gaspille le budget sauf sur
+les coupures massives, trop rares ici pour un gain mesurable. ProbCut est la
+3e technique « théoriquement parfaite pour ce régime » à échouer au SPRT —
+la barrière n'est pas heuristique mais statistique : à ~67 k nœuds/coup,
+aucun gain < +10 Elo n'est vérifiable à 240 parties.
+
+## Livraison v10
+
+- Config inchangée (v5.3 + book). Flag `pcut` livré dans le code (off).
