@@ -373,3 +373,39 @@ v5.3 (fut/LMR/TT) est à nouveau confirmée, cette fois par SPRT formel.
 ## Livraison v8
 
 - Config inchangée (v5.3). Flags livrés dans le code : crit, lmr2, racc (off).
+
+### Session v9 — opening book (technique classique non testée, via chessprogramming.org)
+
+Découverte de la revue de littérature : l'**opening book** (Chess Programming
+Wiki) n'avait jamais été testé, et Traversal s'y prête idéalement — l'arène
+joue sur un ensemble FIXE de 200 plateaux : les ouvertures sont précalculables
+hors-ligne à budget illimité.
+
+Implémentation :
+- `bookgen` (harnais) : pour chaque plateau officiel, 12 demi-coups à cap 400 k
+  nœuds/coup (vs 66 k en arène), dump (clé FNV-1a de position, coup).
+- `obsidienne/src/book.rs` : table embarquée (2 400 positions, triée, lookup
+  binaire) ; `lib.rs` joue le coup du livre à fuel quasi nul si la position
+  exacte est dans le livre (sinon recherche normale — pas de risque hors-ligne).
+- `duelb` : duel via le chemin de production exact (book actif), deux couleurs.
+
+Mesure A/B (mêmes offsets 0/30/60, 72 parties chacun, vs Mont Blanc L5) :
+- sans book : 62V-10D (+338 Elo)
+- avec book  : 64V-8D  (+370 Elo) → **~+30 Elo, dans le bruit (±60)**
+
+Pourquoi le gain est modéré ici : le book rejoue les coups de v5.3 elle-même
+(cap 400 k) — les coups sont quasi identiques à ceux de l'arène (cap fuel), et
+le budget fuel étant par coup, l'économie ne se reporte pas. En revanche :
+- garantit l'ouverture la plus profonde possible sur les 200 plateaux connus ;
+- élimine toute variance d'ouverture (déterminisme total des 12 premiers
+  demi-coups) ;
+- coût : +41 Ko de wasm (257 Ko au total, limite 1 Mo) ;
+- réserve de fuel 3/16 préservée pour les coups critiques tardifs.
+
+Verdict : retenu en prod (coût marginal, garanties réelles), gain Elo non
+démontré statistiquement — documenté comme tel.
+
+## Livraison v9
+
+- Book embarqué (12 demi-coups, 200 plateaux). Config moteur inchangée (v5.3).
+- Outils : `bookgen`, `duelb`. `dist/obsidienne.wasm` 257 Ko, prodpath OK.

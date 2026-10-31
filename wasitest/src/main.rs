@@ -375,6 +375,39 @@ fn mirror_run(n: usize, cap: u64, an: &str, sa: Spec, bn: &str, sb: Spec, off: u
     );
 }
 
+/// Bookgen : génère un opening book — pour chaque plateau officiel, joue les
+/// K premiers demi-coups avec une recherche très profonde (cap 300 k), et dump
+/// (clé de position, coup joué). Le livre est embarqué dans le bot (lib.rs) :
+/// en arène, ces coups sont joués sans dépenser de fuel.
+fn bookgen(k_plies: usize, cap: u64) {
+    let boards = load_boards();
+    for h in boards {
+        let spec = parse_spec("hang=30,nmp=0,lmp=0,rdif=1");
+        let mut p = ObsPlayer::new(h, spec, false, cap, 40);
+        let mut s = new_game(h);
+        for _ in 0..k_plies {
+            if s.over {
+                break;
+            }
+            let m = p.choose(&s);
+            // clé : hash simple et stable de la position (hauteurs + pièces + trait + scores)
+            let mut key: u64 = 0xcbf2_9ce4_8422_2325;
+            for &x in s.heights.iter() {
+                key = (key ^ x as u64).wrapping_mul(0x1000_0000_01b3);
+            }
+            for pc in s.pieces() {
+                key = (key ^ ((pc.owner as u64) << 24 | (pc.kind.strength() as u64) << 16 | pc.sq as u64)).wrapping_mul(0x1000_0000_01b3);
+            }
+            key ^= s.to_move as u64;
+            key = key.rotate_left(13) ^ (s.scores[0] as u64) ^ ((s.scores[1] as u64) << 8);
+            // coup : piece kind to encodé
+            let mm = format!("{}:{}:{}", s.piece(m.piece).kind.strength(), m.kind as u8, m.to);
+            println!("BOOK {} {} {} {}", key, s.ply, m.piece, mm);
+            s = apply_move(&s, &m);
+        }
+    }
+}
+
 /// Distillation : dump (position → score de recherche à budget fixe côté trait).
 /// Contrairement au selfdump (résultat de partie), le label est l'avis de la
 /// recherche profonde — cible stable pour la régression des constantes d'eval.
@@ -636,6 +669,52 @@ fn play_prod(h: [u8; SQUARES], seed: u64) -> (Option<u8>, u16) {
     (s.winner, s.ply)
 }
 
+/// Duel via le chemin de production EXACT (avec opening book) contre un ref level.
+/// Obs joue les deux couleurs alternées : i%2==0 → Obs rouge, sinon Obs bleu.
+fn duel_book(lvl: u8, n: usize, off: usize) {
+    let boards = load_boards();
+    let t0 = Instant::now();
+    let (mut v, mut d, mut dr) = (0usize, 0usize, 0usize);
+    for i in 0..n {
+        let h = boards[(off + i / 2) % boards.len()];
+        let seed = BASE_SEED + i as u64;
+        let mut pr = RefPlayer::new(lvl, seed);
+        let obs_side = if i % 2 == 0 { 1u8 } else { 2u8 };
+        let (w, _) = play_prod_vs(h, |s| pr.choose(s), seed, obs_side);
+        match w {
+            Some(x) if x == obs_side => v += 1,
+            Some(_) => d += 1,
+            None => dr += 1,
+        }
+    }
+    println!(
+        "duelb L{} fuel1625000000 [{}+{}]: {}V-{}D-{}N ({} Elo) [{:.0} s]",
+        lvl, off, off + n, v, d, dr, elo(v, d, dr), t0.elapsed().as_secs_f64()
+    );
+}
+
+/// Partie prod (book, camp `obs_side`) contre un choix adversarial donné.
+fn play_prod_vs<F: FnMut(&State) -> Move>(h: [u8; SQUARES], mut other: F, seed: u64, obs_side: u8) -> (Option<u8>, u16) {
+    let mut s = new_game(h);
+    while !s.over {
+        if s.to_move == obs_side {
+            let moves = legal_moves(&s);
+            let bytes = encode(&s, &moves, move_seed(seed, s.ply), 2_000_000_000);
+            assert!(bytes.len() <= BUFFER_SIZE, "dépassement du tampon");
+            unsafe {
+                std::ptr::copy_nonoverlapping(bytes.as_ptr(), obsidienne::traversal_buffer(), bytes.len());
+            }
+            let idx = obsidienne::traversal_move(bytes.len() as i32);
+            assert!(idx >= 0 && (idx as usize) < moves.len(), "indice illégal: {} vs {}", idx, moves.len());
+            s = apply_move(&s, &moves[idx as usize]);
+        } else {
+            let m = other(&s);
+            s = apply_move(&s, &m);
+        }
+    }
+    (s.winner, s.ply)
+}
+
 fn prodpath(n: usize) {
     let boards = load_boards();
     let t0 = Instant::now();
@@ -713,6 +792,8 @@ fn main() {
         "sanity" => sanity(arg(1, 4)),
         "selfdump" => selfdump(arg(1, 10), arg(2, 0), parse_spec(&arg_s(3, "default"))),
         "distill" => distill(arg(1, 10), arg(2, 0), parse_spec(&arg_s(3, "default")), arg(4, 40_000) as u64, arg_u8(5, 12)),
+        "bookgen" => bookgen(arg(1, 10), arg(2, 300_000) as u64),
+        "duelb" => duel_book(arg_u8(1, 5), arg(2, 12), arg(3, 0)),
         "sprt" => sprt_mirror(
             arg(1, 200), arg(2, 15_000) as u64, &arg_s(3, "default"), parse_spec(&arg_s(3, "default")),
             &arg_s(4, "default"), parse_spec(&arg_s(4, "default")), arg(5, 0), false,
