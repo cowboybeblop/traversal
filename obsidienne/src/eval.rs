@@ -35,6 +35,8 @@ pub struct EvalCfg {
     pub delta: i32,
     /// marge d'élagage futility (par profondeur)
     pub futility: i32,
+    /// table de progression apprise : PROG[kind][tours] (0..=15), si `ptab`
+    pub ptab: [[i32; 16]; 3],
 }
 
 impl Default for EvalCfg {
@@ -52,8 +54,21 @@ impl Default for EvalCfg {
             tempo: 8,
             delta: 60,
             futility: 140,
+            ptab: ptab_from_linear(13, 4, 3),
         }
     }
+}
+
+/// Table PROG[kind][t] équivalente à la formule (span − t)+ · (a + b·F).
+pub fn ptab_from_linear(span: i32, a: i32, b: i32) -> [[i32; 16]; 3] {
+    let mut t = [[0i32; 16]; 3];
+    for k in 0..3 {
+        let f = (k + 1) as i32;
+        for tt in 0..16 {
+            t[k][tt] = (span - tt as i32).max(0) * (a + b * f);
+        }
+    }
+    t
 }
 
 #[inline]
@@ -237,7 +252,12 @@ pub fn eval(s: &State, side: u8, cfg: &EvalCfg, costs: &[[u16; SQUARES]; 2], fla
         };
         let t = turns_for(cost, p.kind);
 
-        let mut v = cfg.base * strength + (cfg.prog_span - t).max(0) * (cfg.prog_a + cfg.prog_b * strength);
+        let prog = if flags.ptab {
+            cfg.ptab[strength as usize - 1][(t as usize).min(15)]
+        } else {
+            (cfg.prog_span - t).max(0) * (cfg.prog_a + cfg.prog_b * strength)
+        };
+        let mut v = cfg.base * strength + prog;
         if nobody_out && p.kind == Kind::Sentinel {
             v += (cfg.sent_span - t).max(0).pow(2) * cfg.sent_w;
         }
@@ -256,7 +276,7 @@ pub fn eval(s: &State, side: u8, cfg: &EvalCfg, costs: &[[u16; SQUARES]; 2], fla
         }
 
         // Pièce menacée : un voisin ennemi adjacent gagnerait le combat.
-        if flags.hang_w != 0 {
+        if flags.hang_w != 0 && !flags.hangtab {
             'threat: for &nb in neighbors_of(p.sq) {
                 let Some(j) = s.at(nb) else { continue };
                 let e = s.piece(j);
@@ -278,8 +298,40 @@ pub fn eval(s: &State, side: u8, cfg: &EvalCfg, costs: &[[u16; SQUARES]; 2], fla
                     }
                 }
                 if atk >= def {
-                    v -= flags.hang_w * strength;
+                    v -= if flags.hangd && def > strength {
+                        flags.hang_w * strength / 2
+                    } else {
+                        flags.hang_w * strength
+                    };
                     break 'threat;
+                }
+            }
+        }
+        // Variante tabulaire du hang (hangtab) : pénalité par type testée en A/B.
+        if flags.hangtab && flags.hang_w == 0 {
+            'threat2: for &nb in neighbors_of(p.sq) {
+                let Some(j) = s.at(nb) else { continue };
+                let e = s.piece(j);
+                if e.owner == p.owner {
+                    continue;
+                }
+                let (ha, ht) = (s.heights[e.sq as usize] as i32, s.heights[p.sq as usize] as i32);
+                let mut atk = e.kind.strength() as i32 + (ha - ht).signum();
+                let mut def = strength;
+                for &q in neighbors_of(p.sq) {
+                    if let Some(k) = s.at(q) {
+                        let a = s.piece(k);
+                        if a.owner == e.owner && q != e.sq {
+                            atk += a.kind.strength() as i32;
+                        }
+                        if a.owner == p.owner && q != p.sq {
+                            def += 1;
+                        }
+                    }
+                }
+                if atk >= def {
+                    v -= [25, 35, 40][(strength - 1) as usize];
+                    break 'threat2;
                 }
             }
         }

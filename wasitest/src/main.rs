@@ -130,6 +130,18 @@ fn parse_spec(s: &str) -> Spec {
                 "mat" => flags.mat = val != 0,
                 "k3" => flags.k3 = val != 0,
                 "iir" => flags.iir = val != 0,
+                "ptab" => { flags.ptab = val != 0; },
+                "hangtab" => flags.hangtab = val != 0,
+                "hangd" => flags.hangd = val != 0,
+                "ptabt" => {
+                    // table apprise par distillation (tools/ptab_tune.py, corpus 6 114 pos.)
+                    flags.ptab = val != 0;
+                    if val != 0 {
+                        cfg.ptab[0] = [91, 84, 73, 72, 65, 56, 49, 42, 35, 28, 21, 14, 7, 0, 0, 0];
+                        cfg.ptab[1] = [130, 140, 106, 96, 90, 90, 71, 60, 50, 40, 30, 20, 10, 0, 0, 0];
+                        cfg.ptab[2] = [169, 238, 157, 128, 109, 90, 91, 78, 65, 52, 39, 26, 13, 0, 0, 0];
+                    }
+                },
                 _ => {}
             }
         }

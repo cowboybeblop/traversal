@@ -66,11 +66,17 @@ pub struct Flags {
     pub k3: bool,
     /// internal iterative reduction : pas de coup TT à prof ≥ 4 → réduire de 1
     pub iir: bool,
+    /// progression par table apprise PROG[kind][t] au lieu de la formule
+    pub ptab: bool,
+    /// hang tabulaire par type de pièce (25/35/40) au lieu de hang_w×Force
+    pub hangtab: bool,
+    /// hang défendu : demi-tarif si la pièce a des soutiens (def > Force)
+    pub hangd: bool,
 }
 
 impl Default for Flags {
     fn default() -> Flags {
-        Flags { aspiration: false, nmp: true, lmr: true, fut: true, lmp: true, ttx: true, support_w: 0, hang_w: 0, blocked: 0, ecache: false, rs: false, rn: false, hb: false, cm: false, rdif: false, ssafe: false, ch: false, seet: false, zc: false, mat: false, k3: false, iir: false }
+        Flags { aspiration: false, nmp: true, lmr: true, fut: true, lmp: true, ttx: true, support_w: 0, hang_w: 0, blocked: 0, ecache: false, rs: false, rn: false, hb: false, cm: false, rdif: false, ssafe: false, ch: false, seet: false, zc: false, mat: false, k3: false, iir: false, ptab: false, hangtab: false, hangd: false }
     }
 }
 

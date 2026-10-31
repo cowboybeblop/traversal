@@ -324,3 +324,29 @@ hors-ligne de plus grande ampleur (policy/NNUE, infra GPU) peut les déplacer.
 
 - Config inchangée (v5.3). Nouveaux flags disponibles : k3, iir. Nouvel outil :
   `distill` (+ support MSE/`--distill` dans tools/texel.py).
+
+### Session v7 — innovations de représentation (tables apprises, sans NNUE)
+
+Objectif : casser la linéarité de l'eval à coût fuel nul, en CPU seul.
+
+| Expérience | Principe | Résultat | Décision |
+|---|---|---|---|
+| `ptab=1` | progression par table PROG[kind][t] (init = formule) | équivalence exacte (0 Elo, rejeu identique) | socle OK |
+| `ptabt=1` | table apprise par distillation (6 114 pos., résidus MSE par (kind,t)) | +7 cap, penta +19, puis **−66 fuel** | rejetée (auto-consistance : la table apprend la recherche qu'elle alimente) |
+| `hangtab=1` | hang 25/35/40 par type au lieu de 30×Force (30/60/90) | **−51 cap** | rejetée : la proportionnalité à la Force est correcte, la Sentinelle menacée doit peser |
+| `hangd=1` | hang défendu à demi-tarif (soutiens présents) | 0 cap (positions rares) | neutre → non livré, code dispo |
+
+Outils livrés : `ptab`/`ptabt`/`hangtab`/`hangd` (flags), `tools/ptab_tune.py`
+(tuning de tables par résidus), `ptab_from_linear` (eval.rs, garantit
+l'équivalence formule↔table).
+
+Conclusion de la représentation tabulaire : les tables apprises par les données
+disponibles (self-play du moteur lui-même) reproduisent le point fixe. La
+non-linéarité ne paie que si les labels viennent d'un oracle **externe et plus
+fort** — exactement le régime NNUE/AlphaZero (rapport de recherche §1.2).
+Sans infra d'entraînement externe, l'eval v5.3 reste l'optimum atteignable.
+
+## Livraison v7
+
+- Config inchangée (v5.3). Flags expérimentaux disponibles : ptab, ptabt,
+  hangtab, hangd. PR #1 fusionné dans main (a4ee700).

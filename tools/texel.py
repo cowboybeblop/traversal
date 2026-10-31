@@ -266,3 +266,8 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+def ptab_lin(span, a, b):
+    """Table PROG[kind][t] équivalente à (span - t)+ * (a + b*F)."""
+    return [[max(0, span - t) * (a + b * (k + 1)) for t in range(16)] for k in range(3)]
