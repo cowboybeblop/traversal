@@ -163,3 +163,20 @@ Validation externe `duelf 5` (Mont Blanc, L5), `hang=30,nmp=0,lmp=0` :
 ## Livraison
 
 - `Flags::best()` = { hang_w: 30, nmp: false, lmp: false } — le reste off.
+
+### Tuning v5.2 (base `hang=30,nmp=0,lmp=0`)
+
+| Paramètre | Variante | Cap 15 k (24 p.) | Fuel | Décision |
+|---|---|---|---|---|
+| tempo | 4 / 12 | +44 / −29 | tempo=4 : **−120** | 8 confirmé |
+| race | 100 / 150 / 250 | — | +29 / +120 puis **+14 (48 p.)** / −29 | 200 confirmé |
+| race_h | 4 / 6 | 0 / 0 | — | 5 confirmé |
+| base | 26 / 34 | −29 / +29 | — | 30 confirmé |
+| sent_w | 8 / 12 | −58 / +58 | sent_w=12 : 0 | 5 confirmé (profil en cloche) |
+| prog_a | 6 | −14 | — | 4 confirmé |
+| score | 120 | −104 | — | 100 confirmé |
+| exta (extension des attaques +1) | on | −14 | — | rejeté |
+
+Aucun paramètre d'éval ne bouge : la v1 était déjà bien calée, et le criblage
+confirme un optimum plat autour des valeurs livrées. Les gains de la v5.2
+viennent exclusivement de la recherche (NMP/LMP coupés).
