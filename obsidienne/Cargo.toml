@@ -1,0 +1,10 @@
+[package]
+name = "obsidienne"
+version = "0.5.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+traversal-bot = { path = "../vendor/traversal-bot" }

@@ -1,0 +1,12 @@
+[package]
+name = "wasitest"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "wasitest"
+path = "src/main.rs"
+
+[dependencies]
+obsidienne = { path = "../obsidienne" }
+traversal-bot = { path = "../vendor/traversal-bot" }
