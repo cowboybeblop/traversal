@@ -124,6 +124,10 @@ fn parse_spec(s: &str) -> Spec {
                 "cm" => flags.cm = val != 0,
                 "rdif" => flags.rdif = val != 0,
                 "ssafe" => flags.ssafe = val != 0,
+                "ch" => flags.ch = val != 0,
+                "seet" => flags.seet = val != 0,
+                "zc" => flags.zc = val != 0,
+                "mat" => flags.mat = val != 0,
                 _ => {}
             }
         }

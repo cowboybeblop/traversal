@@ -223,3 +223,24 @@ Validation externe `duelf 5` (Mont Blanc L5), `hang=30,nmp=0,lmp=0,rdif=1` :
 ## Livraison
 
 - `Flags::best()` = { hang_w: 30, nmp: false, lmp: false, rdif: true }.
+
+### Session v5.3 bis — catalogue restant (tous rejetés)
+
+Base : v5.3 (`hang=30,nmp=0,lmp=0,rdif=1`). Cap 48 p. + fuel 48 p. pour les neutres.
+
+| Flag | Principe | Résultat | Décision |
+|---|---|---|---|
+| `ch=1` | continuation history (kind,to du coup précédent) | 0 cap, 0 fuel, penta 0 | rejeté |
+| `seet=1` | SEE signé : attaques perdantes triées après les silencieux | 0 cap, 0 fuel | rejeté |
+| `zc=1` | contrôle des zones de sortie (prime ≤3 tours) | **−44** cap, penta −41 | rejeté |
+| `mat=1` | terme matériel (12×Force vive) | −7 cap, penta −17 | rejeté (matériel déjà implicite dans prog/score) |
+
+Notes d'implémentation : `chist` (360 Ko) doit vivre sur le heap WASM (Vec),
+sinon la structure Engine copiée par valeur crashe la mémoire (fix documenté).
+`zc` dégrade : la prime de zone duplique le terme de progrès et pousse à
+s'entasser près de la sortie. `mat` n'apporte rien : la Force est déjà capturée
+par prog_b et le différentiel de score de sortie.
+
+Bilan catalogue : search/eval « classique » épuisé sur ce moteur — toutes les
+heuristiques standard restantes sont neutres ou perdantes. Prochaine étape
+rentable : pipeline de données (Texel #15 → policy racine #16 → NNUE #18).

@@ -54,11 +54,19 @@ pub struct Flags {
     pub rdif: bool,
     /// sûreté de la Sentinelle : distance à l'ennemi le plus proche capable de la battre
     pub ssafe: bool,
+    /// continuation history (1 ply) dans le tri des coups silencieux
+    pub ch: bool,
+    /// SEE signé : les attaques perdantes sont triées après les coups silencieux
+    pub seet: bool,
+    /// eval : contrôle des zones de sortie (bord opposé à portée)
+    pub zc: bool,
+    /// eval : terme matériel (différentiel de Force des pièces vivantes)
+    pub mat: bool,
 }
 
 impl Default for Flags {
     fn default() -> Flags {
-        Flags { aspiration: false, nmp: true, lmr: true, fut: true, lmp: true, ttx: true, support_w: 0, hang_w: 0, blocked: 0, ecache: false, rs: false, rn: false, hb: false, cm: false, rdif: false, ssafe: false }
+        Flags { aspiration: false, nmp: true, lmr: true, fut: true, lmp: true, ttx: true, support_w: 0, hang_w: 0, blocked: 0, ecache: false, rs: false, rn: false, hb: false, cm: false, rdif: false, ssafe: false, ch: false, seet: false, zc: false, mat: false }
     }
 }
 
@@ -74,6 +82,15 @@ impl Flags {
     pub fn best() -> Flags {
         Flags { hang_w: 30, nmp: false, lmp: false, rdif: true, ..Flags::default() }
     }
+}
+
+/// Une pièce d'indice donné est-elle vivante, et laquelle ?
+fn chist_new() -> [[[[u16; SQUARES]; 3]; SQUARES]; 3] {
+    [[[[0u16; SQUARES]; 3]; SQUARES]; 3]
+}
+
+fn live_piece(s: &State, owner: u8, kind: Kind, sq: u8) -> Option<traversal_bot::core::state::Piece> {
+    s.pieces().iter().find(|p| p.owner == owner && p.kind == kind && p.sq == sq).copied()
 }
 
 fn kind3(k: Kind) -> usize {
@@ -113,6 +130,10 @@ pub struct Engine {
     cmoves: [[u32; SQUARES]; 6],
     /// dernier coup packé joué (pour counter-move), par ply.
     last_mv: [u32; MAX_PLY + 2],
+    /// continuation history : history[kind][to][kind_prev][to_prev]
+    chist: Vec<[[[[u16; SQUARES]; 3]; SQUARES]; 3]>,
+    /// dernier coup silencieux packé, par ply (pour continuation history)
+    prev_quiet: [u32; MAX_PLY + 2],
 }
 
 impl Engine {
@@ -156,6 +177,8 @@ impl Engine {
             ecache: vec![(0u64, 0i32); ECACHE_N],
             cmoves: [[NO_MOVE; SQUARES]; 6],
             last_mv: [NO_MOVE; MAX_PLY + 2],
+            chist: vec![chist_new()],
+            prev_quiet: [NO_MOVE; MAX_PLY + 2],
         }
     }
 
@@ -246,6 +269,20 @@ impl Engine {
                 k += 200_000;
             }
         }
+        if self.flags.ch && m.kind == MoveKind::Move {
+            let p = s.piece(m.piece);
+            let pq = self.prev_quiet[ply];
+            if pq != NO_MOVE && pq & 0x30000 == 0 {
+                let prev_to = (pq & 0xFF) as usize;
+                let prev_kind = ((pq >> 8) & 0xFF) as usize;
+                if prev_kind < 3 {
+                    k += (self.chist[0][kind3(p.kind)][m.to as usize][prev_kind][prev_to] as i32).min(2048) * 4;
+                }
+            }
+        }
+        if self.flags.seet && m.kind == MoveKind::Attack && m.attack < m.defense {
+            k -= 450_000;
+        }
         k
     }
 
@@ -278,6 +315,31 @@ impl Engine {
         allow_lmr: bool,
     ) -> Option<i32> {
         let cd = (depth - 1 + if m.kind == MoveKind::Exit { 1 } else { 0 }).max(0);
+        if self.flags.ch {
+            let saved = self.prev_quiet[ply];
+            let kq = if m.kind == MoveKind::Move {
+                ((kind3(s.piece(m.piece).kind) as u32) << 8) | m.to as u32
+            } else { NO_MOVE };
+            self.prev_quiet[ply] = kq;
+            let r = self.try_move_inner(s, m, cd, alpha, beta, ply, searched, allow_lmr);
+            self.prev_quiet[ply] = saved;
+            return r;
+        }
+        self.try_move_inner(s, m, cd, alpha, beta, ply, searched, allow_lmr)
+    }
+
+    fn try_move_inner(
+        &mut self,
+        s: &State,
+        m: &Move,
+        cd: i8,
+        alpha: i32,
+        beta: i32,
+        ply: usize,
+        searched: usize,
+        allow_lmr: bool,
+    ) -> Option<i32> {
+        let depth = cd + 1 - if m.kind == MoveKind::Exit { 1 } else { 0 };
         let child = apply_move(s, m);
         if searched == 0 {
             return Some(-self.negamax(&child, cd, -beta, -alpha, ply + 1)?);
@@ -448,6 +510,18 @@ impl Engine {
                                     let p = s.piece(m.piece);
                                     let k = kind3(p.kind) * 2 + (p.owner as usize - 1);
                                     if ply >= 1 { self.cmoves[k][p.sq as usize] = pack_move(&m); }
+                                }
+                                if self.flags.ch && ply >= 1 {
+                                    let pq = self.prev_quiet[ply - 1];
+                                    if pq != NO_MOVE && pq & 0x30000 == 0 {
+                                        let prev_to = (pq & 0xFF) as usize;
+                                        let prev_kind = ((pq >> 8) & 0xFF) as usize;
+                                        let p = s.piece(m.piece);
+                                        if prev_kind < 3 {
+                                            let h = &mut self.chist[0][kind3(p.kind)][m.to as usize][prev_kind][prev_to];
+                                            *h = h.saturating_add((depth as i32 * depth as i32) as u16).min(2048);
+                                        }
+                                    }
                                 }
                             }
                             break;

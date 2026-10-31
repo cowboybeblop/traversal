@@ -316,6 +316,25 @@ pub fn eval(s: &State, side: u8, cfg: &EvalCfg, costs: &[[u16; SQUARES]; 2], fla
             }
         }
     }
+    // Contrôle des zones de sortie : prime par pièce à ≤ 3 tours de la sortie.
+    if flags.zc && nobody_out {
+        for p in s.pieces() {
+            let o = (p.owner - 1) as usize;
+            let t = turns_for(costs[o][p.sq as usize] as i32, p.kind);
+            if t <= 3 {
+                let v = (4 - t) * 15;
+                total += if p.owner == side { v } else { -v };
+            }
+        }
+    }
+    // Matériel : différentiel de Force des pièces vivantes.
+    if flags.mat {
+        let mut m = 0i32;
+        for p in s.pieces() {
+            m += if p.owner == side { p.kind.strength() as i32 } else { -(p.kind.strength() as i32) };
+        }
+        total += 12 * m;
+    }
     total += if s.to_move == side { cfg.tempo } else { -cfg.tempo };
     total
 }
