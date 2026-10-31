@@ -72,11 +72,17 @@ pub struct Flags {
     pub hangtab: bool,
     /// hang défendu : demi-tarif si la pièce a des soutiens (def > Force)
     pub hangd: bool,
+    /// élagage adaptatif : positions tactiques (attaques légales) → futility off, LMR off
+    pub crit: bool,
+    /// LMR précoce : prof ≥ 2 et searched ≥ 3 (au lieu de 3/4)
+    pub lmr2: bool,
+    /// extension de course : les deux Sentinelles à ≤ 3 tours de sortie → +1 ply
+    pub racc: bool,
 }
 
 impl Default for Flags {
     fn default() -> Flags {
-        Flags { aspiration: false, nmp: true, lmr: true, fut: true, lmp: true, ttx: true, support_w: 0, hang_w: 0, blocked: 0, ecache: false, rs: false, rn: false, hb: false, cm: false, rdif: false, ssafe: false, ch: false, seet: false, zc: false, mat: false, k3: false, iir: false, ptab: false, hangtab: false, hangd: false }
+        Flags { aspiration: false, nmp: true, lmr: true, fut: true, lmp: true, ttx: true, support_w: 0, hang_w: 0, blocked: 0, ecache: false, rs: false, rn: false, hb: false, cm: false, rdif: false, ssafe: false, ch: false, seet: false, zc: false, mat: false, k3: false, iir: false, ptab: false, hangtab: false, hangd: false, crit: false, lmr2: false, racc: false }
     }
 }
 
@@ -368,7 +374,14 @@ impl Engine {
             return Some(-self.negamax(&child, cd, -beta, -alpha, ply + 1)?);
         }
         let mut r = 0i8;
-        if allow_lmr && self.flags.lmr && depth >= 3 && searched >= 4 && m.kind == MoveKind::Move {
+        if self.flags.lmr2 {
+            if allow_lmr && self.flags.lmr && depth >= 2 && searched >= 3 && m.kind == MoveKind::Move {
+                r = 1 + (searched as i32 / 20) as i8;
+                if cd - r < 1 {
+                    r = (cd - 1).max(0);
+                }
+            }
+        } else if allow_lmr && self.flags.lmr && depth >= 3 && searched >= 4 && m.kind == MoveKind::Move {
             r = 1 + (searched as i32 / 16) as i8;
             if cd - r < 1 {
                 r = (cd - 1).max(0);
@@ -440,15 +453,37 @@ impl Engine {
             }
         }
 
+        // Extension de course (racc) : course de Sentinelles SERRÉE (R8.2)
+        // → approfondir d'un ply, la décision y est critique.
+        let mut depth = depth;
+        if self.flags.racc && s.finished == 0 && depth <= 8 {
+            let sent_t = |owner: u8| -> Option<i32> {
+                let o = (owner - 1) as usize;
+                s.pieces()
+                    .iter()
+                    .filter(|p| p.owner == owner && p.kind == Kind::Sentinel)
+                    .map(|p| self.costs[o][p.sq as usize] as i32)
+                    .min()
+            };
+            if let (Some(a), Some(b)) = (sent_t(1), sent_t(2)) {
+                if a <= 14 && b <= 14 && (a - b).abs() <= 2 {
+                    depth += 1;
+                }
+            }
+        }
         let n = moves.len();
         let alpha0 = alpha;
         let stand_opt = if depth <= 2 { Some(self.eval_node(s, s.to_move)) } else { None };
 
         // Futility : position calme sans espoir à faible profondeur → stand-pat.
+        // crit (élagage adaptatif) : en position tactique (attaque légale présente),
+        // la marge de futility est doublée — on élargit la fenêtre de prudence.
+        let tactical = self.flags.crit && moves.iter().any(|m| m.kind == MoveKind::Attack);
         if self.flags.fut && depth <= 2 {
             if let Some(stand) = stand_opt {
                 let calm = !moves.iter().any(|m| matches!(m.kind, MoveKind::Exit | MoveKind::Attack));
-                if calm && stand + self.cfg.futility * depth as i32 <= alpha {
+                let margin = if tactical { self.cfg.futility * 2 } else { self.cfg.futility };
+                if calm && stand + margin * depth as i32 <= alpha {
                     return Some(stand);
                 }
             }

@@ -350,3 +350,26 @@ Sans infra d'entraînement externe, l'eval v5.3 reste l'optimum atteignable.
 
 - Config inchangée (v5.3). Flags expérimentaux disponibles : ptab, ptabt,
   hangtab, hangd. PR #1 fusionné dans main (a4ee700).
+
+### Session v8 — élagage adaptatif et extensions (rapport §5.2 revisité)
+
+Correction méthodologique : le point 5.2 du rapport (« assouplir LMR/futility sur
+positions critiques ») n'avait jamais été réellement testé — seul le LMR à
+réduction fixe (lmr1) l'avait été. Trois implémentations dédiées :
+
+| Expérience | Principe | Résultat | Décision |
+|---|---|---|---|
+| `crit=1` | marge de futility doublée en position tactique (attaque légale) | 0 cap | neutre (le filtre `calm` couvrait déjà) |
+| `lmr2=1` | LMR précoce (prof ≥ 2, searched ≥ 3, /20) | +44 cap, penta +64, puis 0 fuel et **SPRT INCONCLUSIF** (109V-104D-27N, llr −0,01/240 p.) | non livré |
+| `racc=1` (v1) | extension +1 si les deux Sentinelles proches de sortir | **−243** | rejeté |
+| `racc=1` (v2, course serrée seulement) | idem, différentiel ≤ 2, cap prof 8 | **−243** (identique) | rejeté : la course serrée est quasi permanente dès l'ouverture (symétrie) — l'extension s'applique partout et explose le budget |
+
+Bilan v8 : l'élagage adaptatif du rapport ne paie pas sur ce moteur — la
+détection de criticalité utilisable (attaques légales) est redondante avec le
+filtre `calm` existant, et l'extension de course est structurellement
+contre-productive dans un jeu symétrique à budget fuel. La cascade
+v5.3 (fut/LMR/TT) est à nouveau confirmée, cette fois par SPRT formel.
+
+## Livraison v8
+
+- Config inchangée (v5.3). Flags livrés dans le code : crit, lmr2, racc (off).
