@@ -130,3 +130,36 @@ plus haut ont été pris avec ce même schéma sur le build original.
 - Étendre duelf L5 spec v5 à ≥ 100 parties ; fmirror v5 vs hang=30 à ≥ 100 parties.
 - Confronter le mystère « 44 % default vs 52-67 % selon spec » à grande échelle.
 - Pousser sur GitHub dès que le connecteur a la permission Contents:write.
+
+## Session v5.2 — re-criblage complet (NMP/LMP)
+
+Constat initial : le build v5.1 livrait `hang=30,blocked=140,ec=1`. Re-criblage
+systématique en cap puis fuel (fmirror 24, confirmation 48 à offset disjoint) :
+
+| Expérience | Résultat | Décision |
+|---|---|---|
+| `blocked=140,ec=1` vs `hang=30` (fuel, 24 p.) | 9V-14D-1N, **−73 Elo** | écarté définitivement |
+| `hang=20` / `hang=40` vs `hang=30` (fuel) | −29 / −89 | hang=30 confirmé |
+| **`nmp=0`** vs `hang=30` (cap, fuel 24, fuel 48) | +104 / +104 / **+191 (33V-9D-6N)** | ✅ **RETENU** |
+| **`nmp=0,lmp=0`** vs `nmp=0` (fuel 24, 48) | +44 / **+51 (27V-20D-1N)** | ✅ **RETENU** |
+| `fut=0`, `lmr=0`, `tt=0` sur nouvelle base (cap) | −120 / −29 / −29 | tous gardés |
+| `asp=1` / `ec=1` sur nouvelle base (fuel, 24 p.) | 0 / −14 | neutres → off |
+| `hang=25` / `hang=35` sur nouvelle base (fuel 24/48) | +29 puis −14 / −73 | hang=30 confirmé |
+| `delta=80` (cap +104, fuel +29, confirm. 48) | **−51** | bruit cap, rejeté ; 60 gardé |
+| `futility=100` (cap +104, fuel −29) | — | rejeté ; 140 gardé |
+| `ord=1` (base Dijkstra dans l'ordering interne) | −73 cap, **−137 fuel** | rejeté |
+| `lmr1=1` (réduction LMR fixe r=1) | −29 cap | rejeté |
+
+Pourquoi NMP devait sauter : le null-move est primitif ici (tour inversé sans
+véritable tempo — l'adversaire « passe » dans la simulation), il crée des coupures
+fictives sur des positions de course. LMP, conçu pour élaguer du silencieux,
+perdait des coups de progression utiles dès que NMP ne masquait plus les scores.
+
+Validation externe `duelf 5` (Mont Blanc, L5), `hang=30,nmp=0,lmp=0` :
+- [0+12] 11V-1D-0N ; [6+30] 18V-2D-4N ; [30+54] 21V-3D-0N → cumul **39V-5D-4N ≈ +300 Elo**.
+- Miroir fuel vs l'ancienne config livrée : **39V-9D-0N (+255 Elo)** sur 48 p.
+- ~67 k nœuds/coup, wasm 209 Ko, sanity/rejeu OK.
+
+## Livraison
+
+- `Flags::best()` = { hang_w: 30, nmp: false, lmp: false } — le reste off.

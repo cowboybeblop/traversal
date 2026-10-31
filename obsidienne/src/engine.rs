@@ -55,12 +55,12 @@ const ECACHE_N: usize = 1 << 18;
 
 impl Flags {
     /// Ensemble validé par criblage A/B (voir EXPERIMENTS.md) :
-    /// hang=30 (pièces menacées), blocked=140 (progression barrée par les
-    /// Sentinelles adverses) et cache d'évaluations Zobrist. À budget de
-    /// nœuds égal : +92 Elo/100 p. ; à parité fuel réelle : +27 Elo/104 p.
-    /// face au hang=30 seul ; +22 Elo/64 p. face à hang=30+cache.
+    /// hang=30 (pièces menacées), sans null-move ni LMP (les deux sont
+    /// perdants en miroir fuel sur ce build). `blocked` et le cache d'évaluations
+    /// ont été écartés : le coût fuel de `blocked` (+2 Dijkstra/éval) annule son
+    /// gain, le cache est neutre une fois NMP coupé.
     pub fn best() -> Flags {
-        Flags { hang_w: 30, blocked: 140, ecache: true, ..Flags::default() }
+        Flags { hang_w: 30, nmp: false, lmp: false, ..Flags::default() }
     }
 }
 
