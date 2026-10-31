@@ -20,6 +20,7 @@ import sys
 SIZE = 10
 SQUARES = 100
 MOVEMENT = {1: 5, 2: 4, 3: 3}
+WIN = 100_000
 PROG_SPAN = 13
 SENT_SPAN = 8
 
@@ -73,6 +74,7 @@ def turns_for(cost, strength):
 
 
 LINE_RE = re.compile(r"^(\d+) (\d+) (\d+) (\d+) \| (.*?)\| (.*?)\| ([0-9.]+)$")
+LINE_RE_D = re.compile(r"^(\d+) (\d+) (\d+) \| (.*?)\| (.*?)\| (-?[0-9.]+)$")
 
 
 def parse(path):
@@ -80,15 +82,24 @@ def parse(path):
     with open(path) as f:
         for line in f:
             m = LINE_RE.match(line.strip())
-            if not m:
+            if m:
+                to_move, s1, s2 = int(m.group(1)), int(m.group(3)), int(m.group(4))
+                heights = [int(v) for v in m.group(5).split()]
+                pieces = []
+                for tok in m.group(6).split():
+                    o, st, sq = tok.split(":")
+                    pieces.append((int(o), int(st), int(sq)))
+                data.append((to_move, s1, s2, heights, pieces, float(m.group(7))))
                 continue
-            to_move, ply, s1, s2 = map(int, (m.group(1), m.group(2), m.group(3), m.group(4)))
-            heights = [int(v) for v in m.group(5).split()]
-            pieces = []
-            for tok in m.group(6).split():
-                o, st, sq = tok.split(":")
-                pieces.append((int(o), int(st), int(sq)))
-            data.append((to_move, s1, s2, heights, pieces, float(m.group(7))))
+            m = LINE_RE_D.match(line.strip())
+            if m:
+                to_move, s1, s2 = int(m.group(1)), int(m.group(2)), int(m.group(3))
+                heights = [int(v) for v in m.group(4).split()]
+                pieces = []
+                for tok in m.group(5).split():
+                    o, st, sq = tok.split(":")
+                    pieces.append((int(o), int(st), int(sq)))
+                data.append((to_move, s1, s2, heights, pieces, float(m.group(6))))
     return data
 
 
@@ -182,17 +193,38 @@ def loss(rows, p, scale):
     return L / len(rows)
 
 
+def loss_mse(rows, p, scale):
+    """Distillation : MSE entre eval linéaire et score de recherche.
+    Les positions au voisinage de la victoire (|z| ≥ WIN/2) sont exclues :
+    elles encodent WIN - ply, pas un avis positionnel."""
+    L = 0.0
+    n = 0
+    for f in rows:
+        z = f[9]
+        if abs(z) >= WIN / 2:
+            continue
+        side = f[0]
+        e = eval_side(f, side, p, 1.0)
+        L += (e - z) ** 2
+        n += 1
+    return L / max(n, 1)
+
+
 def main():
     path = sys.argv[1]
     iters = 3000
     if "--iters" in sys.argv:
         iters = int(sys.argv[sys.argv.index("--iters") + 1])
+    distill_mode = "--distill" in sys.argv
     data = parse(path)
     rows = agg(data)
-    print(f"{len(rows)} positions, {len(data)} lignes")
+    print(f"{len(rows)} positions, {len(data)} lignes, mode={'distill' if distill_mode else 'wl'}")
 
     p = dict(INIT)
-    scale = 250.0
+    scale = 250.0 if not distill_mode else 1.0
+    Lfn = loss if not distill_mode else (lambda r, pp, sc: loss_mse(r, pp, sc))
+    L0 = Lfn(rows, p, scale)
+    print(f"loss initiale {L0:.2f}")
     lr = {"score": 1.0, "base": 0.4, "prog_a": 0.05, "prog_b": 0.05, "sent_w": 0.05,
           "hang_w": 0.3, "race": 2.0, "tempo": 0.1}
     m = {k: 0.0 for k in PARAMS}
@@ -207,8 +239,8 @@ def main():
             pp = dict(p)
             step = max(h, abs(p[k]) * h)
             pp[k] += step
-            lp = loss(rows, pp, scale)
-            g[k] = (lp - loss(rows, p, scale)) / step
+            lp = Lfn(rows, pp, scale)
+            g[k] = (lp - Lfn(rows, p, scale)) / step
         for k in PARAMS:
             m[k] = b1 * m[k] + (1 - b1) * g[k]
             v[k] = b2 * v[k] + (1 - b2) * g[k] * g[k]
@@ -221,12 +253,12 @@ def main():
             if k != "tempo":
                 p[k] = max(0.0, p[k])
         if it % 500 == 0:
-            print(f"  it {it}: loss {loss(rows, p, scale):.5f}")
+            print(f"  it {it}: loss {Lfn(rows, p, scale):.2f}")
     print("\nparamètres tunés :")
     for k in PARAMS:
         cur = INIT[k]
         print(f"  {k:7s} {cur:6.1f} → {p[k]:7.2f}")
-    print(f"loss finale {loss(rows, p, scale):.5f} vs initiale {L0:.5f}")
+    print(f"loss finale {Lfn(rows, p, scale):.2f} vs initiale {L0:.2f}")
     # suggestion d'arrondis entiers
     print("\nsuggestion (arrondi) :")
     print(", ".join(f"{k}={max(1, round(p[k]))}" for k in PARAMS))

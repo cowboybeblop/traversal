@@ -62,11 +62,15 @@ pub struct Flags {
     pub zc: bool,
     /// eval : terme matériel (différentiel de Force des pièces vivantes)
     pub mat: bool,
+    /// 3 killers par ply au lieu de 2
+    pub k3: bool,
+    /// internal iterative reduction : pas de coup TT à prof ≥ 4 → réduire de 1
+    pub iir: bool,
 }
 
 impl Default for Flags {
     fn default() -> Flags {
-        Flags { aspiration: false, nmp: true, lmr: true, fut: true, lmp: true, ttx: true, support_w: 0, hang_w: 0, blocked: 0, ecache: false, rs: false, rn: false, hb: false, cm: false, rdif: false, ssafe: false, ch: false, seet: false, zc: false, mat: false }
+        Flags { aspiration: false, nmp: true, lmr: true, fut: true, lmp: true, ttx: true, support_w: 0, hang_w: 0, blocked: 0, ecache: false, rs: false, rn: false, hb: false, cm: false, rdif: false, ssafe: false, ch: false, seet: false, zc: false, mat: false, k3: false, iir: false }
     }
 }
 
@@ -107,7 +111,7 @@ fn never() -> bool {
 
 pub struct Engine {
     pub tt: TT,
-    killers: [[u32; 2]; MAX_PLY + 2],
+    killers: [[u32; 3]; MAX_PLY + 2],
     history: [[[u32; SQUARES]; SQUARES]; 3],
     costs: [[u16; SQUARES]; 2],
     pub heights: [u8; SQUARES],
@@ -157,7 +161,7 @@ impl Engine {
         }
         Engine {
             tt: TT::new(),
-            killers: [[NO_MOVE; 2]; MAX_PLY + 2],
+            killers: [[NO_MOVE; 3]; MAX_PLY + 2],
             history: [[[0; SQUARES]; SQUARES]; 3],
             costs: [exit_costs(&heights, 1), exit_costs(&heights, 2)],
             heights,
@@ -261,6 +265,8 @@ impl Engine {
             k += 400_000;
         } else if packed == self.killers[ply][1] {
             k += 380_000;
+        } else if self.flags.k3 && packed == self.killers[ply][2] {
+            k += 360_000;
         }
         if self.flags.cm && m.kind == MoveKind::Move && ply >= 1 {
             let p = s.piece(m.piece);
@@ -289,9 +295,20 @@ impl Engine {
     /// Coup de coupure : killers + bonus d'history à gravité (32·d², cap 2^24).
     fn bump_history(&mut self, s: &State, m: &Move, ply: usize, depth: i8) {
         let packed = pack_move(m);
+        let slots = if self.flags.k3 { 3 } else { 2 };
         if self.killers[ply][0] != packed {
-            if self.killers[ply][1] != packed {
-                self.killers[ply][1] = self.killers[ply][0];
+            let mut j = 1;
+            while j < slots && self.killers[ply][j] != packed {
+                j += 1;
+            }
+            // décaler (nouveau coup en tête)
+            let mut k = j.min(slots - 1);
+            while k > 0 {
+                self.killers[ply][k] = self.killers[ply][k - 1];
+                k -= 1;
+            }
+            if j >= slots {
+                self.killers[ply][slots - 1] = self.killers[ply][slots - 1];
             }
             self.killers[ply][0] = packed;
         }
@@ -372,6 +389,9 @@ impl Engine {
 
         let mut tt_mv = NO_MOVE;
         let tt_probe = if self.flags.ttx { self.tt.probe(key) } else { None };
+        if self.flags.iir && tt_probe.is_none() && depth >= 4 {
+            return self.negamax(s, depth - 1, alpha, beta, ply);
+        }
         if let Some(e) = tt_probe {
             if e.depth as i8 >= depth {
                 match e.bound {
@@ -604,7 +624,7 @@ impl Engine {
         self.stop = stop;
         self.nodes = 0;
         self.aborted = false;
-        self.killers = [[NO_MOVE; 2]; MAX_PLY + 2];
+        self.killers = [[NO_MOVE; 3]; MAX_PLY + 2];
         self.history = [[[0; SQUARES]; SQUARES]; 3];
         self.last_ply = s.ply;
 

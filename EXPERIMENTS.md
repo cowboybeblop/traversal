@@ -303,3 +303,24 @@ Conclusions d'expert :
 - Config **inchangée** (v5.3) : `Flags::best()` = { hang_w: 30, nmp: false,
   lmp: false, rdif: true }.
 - Nouveaux outils livrés : `selfdump`, `tools/texel.py`, `sprt`/`fsprt`.
+
+### Session v6 bis — IIR, 3 killers, distillation MSE
+
+| Expérience | Principe | Résultat | Décision |
+|---|---|---|---|
+| `k3=1` (vrais 3 killers) | 3e slot killer, bonus 360k | −14 cap | rejeté |
+| `iir=1` | internal iterative reduction (prof ≥ 4 sans TT) | 0 cap, +7 fuel/48, **SPRT INCONCLUSIF** (106V-118D-16N, llr −0,01/240 p.) | neutre → non livré (code dispo) |
+| `distill` (nouvel outil) | corpus labellisé par scores de recherche (cap 40 k, prof 12) | 6 114 pos. ; MSE 10 145 ; suggestions ≈ valeurs actuelles | outil livré |
+| `prog_a=7` (suggestion distill) | — | +73 cap (penta +64) puis **−58 fuel** | rejeté : 3e faux positif cap sur prog_a |
+
+Leçon structurelle : les scores de recherche v5.3 sont produits par l'eval v5.3 —
+la distillation MSE converge vers les constantes courantes (auto-consistance),
+seule la W/L de parties diversifiées peut les déplacer, et son bruit l'interdit
+à ce jour. Trois méthodes indépendantes (criblage manuel, Texel W/L, distill)
+convergent : **les constantes v5.3 sont un point fixe** — seul un apprentissage
+hors-ligne de plus grande ampleur (policy/NNUE, infra GPU) peut les déplacer.
+
+## Livraison v6 bis
+
+- Config inchangée (v5.3). Nouveaux flags disponibles : k3, iir. Nouvel outil :
+  `distill` (+ support MSE/`--distill` dans tools/texel.py).

@@ -128,6 +128,8 @@ fn parse_spec(s: &str) -> Spec {
                 "seet" => flags.seet = val != 0,
                 "zc" => flags.zc = val != 0,
                 "mat" => flags.mat = val != 0,
+                "k3" => flags.k3 = val != 0,
+                "iir" => flags.iir = val != 0,
                 _ => {}
             }
         }
@@ -158,11 +160,12 @@ struct ObsPlayer {
     depth: u8,
     nodes: u64,
     moves: u64,
+    last_score: i32,
 }
 
 impl ObsPlayer {
     fn new(h: [u8; SQUARES], spec: Spec, fuel_on: bool, cap: u64, depth: u8) -> ObsPlayer {
-        ObsPlayer { engine: Engine::new(h, spec.cfg, spec.flags), spec, fuel_on, cap, depth, nodes: 0, moves: 0 }
+        ObsPlayer { engine: Engine::new(h, spec.cfg, spec.flags), spec, fuel_on, cap, depth, nodes: 0, moves: 0, last_score: 0 }
     }
 
     fn choose(&mut self, s: &State) -> Move {
@@ -190,7 +193,8 @@ impl ObsPlayer {
         } else {
             set_cap(self.cap);
         }
-        let (mv, _score, _d) = self.engine.search(s, self.depth, harness_stop);
+        let (mv, score, _d) = self.engine.search(s, self.depth, harness_stop);
+        self.last_score = score;
         self.nodes += self.engine.nodes;
         self.moves += 1;
         moves
@@ -354,6 +358,35 @@ fn mirror_run(n: usize, cap: u64, an: &str, sa: Spec, bn: &str, sb: Spec, off: u
         tag, cap_s, off, off + n, an, bn, v, d, dr, elo(v, d, dr), an,
         penta[0], penta[1], penta[2], penta[3], penta[4], penta_nd, t0.elapsed().as_secs_f64(), penta_elo
     );
+}
+
+/// Distillation : dump (position → score de recherche à budget fixe côté trait).
+/// Contrairement au selfdump (résultat de partie), le label est l'avis de la
+/// recherche profonde — cible stable pour la régression des constantes d'eval.
+fn distill(n: usize, off: usize, spec: Spec, cap: u64, depth: u8) {
+    let boards = load_boards();
+    for i in 0..n {
+        let h = boards[(off + i) % boards.len()];
+        let mut p = ObsPlayer::new(h, spec, false, cap, depth);
+        let mut s = new_game(h);
+        while !s.over {
+            let m = p.choose(&s);
+            // score après recherche, côté trait courant (= joueur qui vient de chercher)
+            let z = p.last_score;
+            let mut line = String::new();
+            line.push_str(&format!("{} {} {} |", s.to_move, s.scores[0] as u32, s.scores[1] as u32));
+            for j in 0..SQUARES {
+                line.push(' ');
+                line.push_str(&h[j].to_string());
+            }
+            line.push_str(" |");
+            for pc in s.pieces() {
+                line.push_str(&format!(" {}:{}:{}", pc.owner, pc.kind.strength(), pc.sq));
+            }
+            println!("{} | {}", line, z);
+            s = apply_move(&s, &m);
+        }
+    }
 }
 
 /// SPRT (test séquentiel de probabilité ratio, style Fishtest) sur miroir A/B.
@@ -664,6 +697,7 @@ fn main() {
     match cmd.as_str() {
         "sanity" => sanity(arg(1, 4)),
         "selfdump" => selfdump(arg(1, 10), arg(2, 0), parse_spec(&arg_s(3, "default"))),
+        "distill" => distill(arg(1, 10), arg(2, 0), parse_spec(&arg_s(3, "default")), arg(4, 40_000) as u64, arg_u8(5, 12)),
         "sprt" => sprt_mirror(
             arg(1, 200), arg(2, 15_000) as u64, &arg_s(3, "default"), parse_spec(&arg_s(3, "default")),
             &arg_s(4, "default"), parse_spec(&arg_s(4, "default")), arg(5, 0), false,
