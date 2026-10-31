@@ -244,3 +244,62 @@ par prog_b et le différentiel de score de sortie.
 Bilan catalogue : search/eval « classique » épuisé sur ce moteur — toutes les
 heuristiques standard restantes sont neutres ou perdantes. Prochaine étape
 rentable : pipeline de données (Texel #15 → policy racine #16 → NNUE #18).
+
+## Session v6 — pipeline data : Texel tuning + SPRT (mode expert)
+
+Infrastructure livrée :
+
+1. **`selfdump`** (harnais) : self-play fuel avec dump de positions labellisées
+   (W/D/L final côté trait), une partie sur deux contre un bot de référence pour
+   la diversité. Format : `to_move ply scores | hauteurs | pièces | z`.
+2. **`tools/texel.py`** : réimplémentation Python de l'eval (Dijkstra exit_costs,
+   turns_for, prog, sent, hang, rdif, tempo) + régression logistique (BCE,
+   scale 250, Adam sur gradient numérique). Params tunés : score, base, prog_a,
+   prog_b, sent_w, hang_w, race, tempo.
+3. **`sprt`/`fsprt`** (harnais) : test séquentiel (likelihood-ratio trinomial,
+   seuils ±2.944 = α/β 5 %) avec arrêt automatique — remplace les seuils
+   manuels « 24/48/104 ».
+
+### Résultats Texel
+
+- Corpus 1 (self-play pur, 7 717 pos.) : loss 0.637→0.624, mais la config
+  suggérée **perd −51 Elo en fuel**. corpus biaisé (le bot s'entraîne à prédire
+  ses propres décisions).
+- Corpus 2 (mixte vs réf., 9 142 pos.) : loss 0.547→0.514, suggestions encore
+  plus extrêmes (hang_w→100, score→17) : biais « camp fort = v5.3 », la
+  régression apprend l'eval v5.3 elle-même plutôt que l'optimum.
+- Application **un paramètre à la fois** (leçon du skill : ne jamais livrer un
+  tuning global d'un coup) : `prog_a=10` semblait gagner (+27 Elo/104 p. fuel)
+  mais le **SPRT formel (elo0=0, elo1=+5, α=β=5 %) est INCONCLUSIF** :
+  106V-112D-22N sur 240 p., llr=−0.01. Les faux positifs de moindre ampleur
+  (`prog_a=8` : +58 cap puis **−37/104 fuel** ; `hang_w=55` : −51 ; `prog_b=11` :
+  −97 ; `sent_w=7` : −51) confirment la nature bruitée du corpus.
+
+Conclusions d'expert :
+- Le label « résultat final » sur corpus mono-bot est trop bruité pour les
+  constantes de second ordre (hang, sent, race) : il faudrait des evals de
+  recherche profonde comme cibles (distillation), pas des W/L de parties.
+- Le Texel W/L sur corpus mono-bot ne produit **aucun paramètre livrable** :
+  la config v5.3 reste inchangée. Pour débloquer : labels de distillation
+  (evals de recherche profonde plutôt que résultats de partie) — chantier
+  documenté ci-dessous.
+
+### Chantier suivant (documenté, non lancé) : #16 policy racine / #18 NNUE
+
+1. **Labels de distillation** : rejouer le corpus en enregistrant (position →
+   score de recherche v5.3 à prof 12+) au lieu du W/L final ; le tuner régresse
+   sur ces scores — c'est la méthode « Lc0→SF » du skill, la seule qui casse
+   le biais mono-bot.
+2. **Policy racine (#16)** : entraîner un petit modèle (20-30 features par coup
+   racine : delta Dijkstra, attaque/défense, hang, rdif…) à prédire le coup
+   choisi par la recherche ; utilisation **ordering racine uniquement**.
+3. **NNUE (#18)** : feature-set (type, camp, case) + hauteur de case +
+   menaces explicites ; accumulator incrémental obligatoire ; ~1-2 M positions
+   d'entraînement nécessaires ; quantification int8. Infra GPU requise —
+   hors de ce sandbox, à documenter dans un RFC dédié.
+
+## Livraison v6
+
+- Config **inchangée** (v5.3) : `Flags::best()` = { hang_w: 30, nmp: false,
+  lmp: false, rdif: true }.
+- Nouveaux outils livrés : `selfdump`, `tools/texel.py`, `sprt`/`fsprt`.
