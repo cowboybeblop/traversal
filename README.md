@@ -47,11 +47,12 @@ node run.mjs fmirror 104 hang=30,blocked=140,ec=1 hang=30        # A/B fuel
 node run.mjs duelf 5 120 0 hang=30,blocked=140,ec=1              # vs Mont Blanc
 ```
 
-## Configuration livrée
+## Configuration livrée (v5.3)
 
-`Flags::best()` = `hang=30,blocked=140,ec=1` : pièces menacées (−30×Force), distance
-de progression mélangée à 40 % avec un Dijkstra « avec obstacles », cache d'évaluations
-Zobrist (2^18 entrées, états terminaux exclus). Choix et mesures : voir
+`Flags::best()` = `hang=30,nmp=0,lmp=0,rdif=1` : pièces menacées (−30×Force),
+sans null-move ni LMP (perdants en miroir fuel), race des Sentinelles graduée
+(différentiel de plies de sortie au lieu du bonus binaire). Binaire de production :
+`dist/obsidienne.wasm` (~216 Ko). Choix et mesures : voir
 [`EXPERIMENTS.md`](EXPERIMENTS.md).
 
 ## Historique des versions
@@ -60,5 +61,7 @@ Zobrist (2^18 entrées, états terminaux exclus). Choix et mesures : voir
   Mont Blanc (chiffre historique, non reproduit depuis les reconstructions).
 - **v4** — `hang=30` (pièces menacées).
 - **v5** — `blocked=140` + cache d'évaluations ; +165 Elo vs Mont Blanc (120 p.).
-- **v5.1 (ce build)** — reconstruction intégrale après perte de l'environnement ;
-  voir la note de reconstruction dans `EXPERIMENTS.md`.
+- **v5.1** — reconstruction intégrale après perte de l'environnement.
+- **v5.2** — NMP et LMP coupés (+191/+51 Elo en miroir fuel) ; `blocked`/écartés.
+- **v5.3 (ce build)** — race graduée `rdif` (+64 Elo/104 p.) ; vs Mont Blanc L5 :
+  95V-12D-1N (≈ +350 Elo) sur 108 parties.
